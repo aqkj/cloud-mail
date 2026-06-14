@@ -35,8 +35,16 @@ const emailService = {
 		accountId = Number(accountId);
 		allReceive = Number(allReceive);
 
+		if (!size || Number.isNaN(size)) {
+			size = 20;
+		}
+
 		if (size > 50) {
 			size = 50;
+		}
+
+		if (size < 1) {
+			size = 1;
 		}
 
 		if (!emailId) {
@@ -52,6 +60,10 @@ const emailService = {
 		if (isNaN(allReceive)) {
 			let accountRow = await accountService.selectById(c, accountId);
 			allReceive = accountRow.allReceive;
+		}
+
+		if (this.isLiteQuery(params)) {
+			return await this.listLite(c, { emailId, type, accountId, size, timeSort, allReceive }, userId);
 		}
 
 		const query = orm(c)
@@ -132,6 +144,46 @@ const emailService = {
 		}
 
 		return { list, total: totalRow.total, latestEmail };
+	},
+
+	async listLite(c, params, userId) {
+		const { emailId, type, accountId, size, timeSort, allReceive } = params;
+
+		let query = orm(c)
+			.select(this.liteEmailSelect())
+			.from(email);
+
+		if (allReceive) {
+			query = query.leftJoin(
+				account,
+				eq(account.accountId, email.accountId)
+			);
+		}
+
+		query = query.where(
+			and(
+				allReceive ? eq(account.isDel, isDel.NORMAL) : eq(email.accountId, accountId),
+				eq(email.userId, userId),
+				timeSort ? gt(email.emailId, emailId) : lt(email.emailId, emailId),
+				eq(email.type, type),
+				eq(email.isDel, isDel.NORMAL)
+			)
+		);
+
+		if (timeSort) {
+			query.orderBy(asc(email.emailId));
+		} else {
+			query.orderBy(desc(email.emailId));
+		}
+
+		const list = await query.limit(size).all();
+		const latestEmail = (timeSort ? list.at(-1) : list[0]) || {
+			emailId: 0,
+			accountId: accountId,
+			userId: userId,
+		};
+
+		return { list, total: list.length, latestEmail };
 	},
 
 	async delete(c, params, userId) {
@@ -701,34 +753,98 @@ const emailService = {
 	},
 
 	async latest(c, params, userId) {
-		let { emailId, accountId, allReceive } = params;
+		let { emailId, accountId, allReceive, size } = params;
+		emailId = Number(emailId);
+		accountId = Number(accountId);
 		allReceive = Number(allReceive);
+		size = Number(size);
+
+		if (!emailId || Number.isNaN(emailId)) {
+			emailId = 0;
+		}
+
+		if (!size || Number.isNaN(size)) {
+			size = 20;
+		}
+
+		if (size > 20) {
+			size = 20;
+		}
+
+		if (size < 1) {
+			size = 1;
+		}
 
 		if (isNaN(allReceive)) {
 			let accountRow = await accountService.selectById(c, accountId);
 			allReceive = accountRow.allReceive;
 		}
 
-		let list = await orm(c).select({...email}).from(email)
-			.leftJoin(
+		const liteQuery = this.isLiteQuery(params);
+		const selectFields = liteQuery ? this.liteEmailSelect() : {...email};
+		const skipAccountJoin = liteQuery && !allReceive;
+		let query = orm(c).select(selectFields).from(email);
+
+		if (!skipAccountJoin) {
+			query = query.leftJoin(
 				account,
 				eq(account.accountId, email.accountId)
-			)
-			.where(
-				and(
-					gt(email.emailId, emailId),
-					eq(email.userId, userId),
-					eq(email.isDel, isDel.NORMAL),
-					eq(account.isDel, isDel.NORMAL),
-					allReceive ? eq(1,1) : eq(email.accountId, accountId),
-					eq(email.type, emailConst.type.RECEIVE)
-				))
-			.orderBy(desc(email.emailId))
-			.limit(20);
+			);
+		}
 
-		await this.emailAddAtt(c, list);
+		query = query.where(
+			and(
+				gt(email.emailId, emailId),
+				eq(email.userId, userId),
+				eq(email.isDel, isDel.NORMAL),
+				skipAccountJoin ? eq(email.accountId, accountId) : and(
+					eq(account.isDel, isDel.NORMAL),
+					allReceive ? eq(1,1) : eq(email.accountId, accountId)
+				),
+				eq(email.type, emailConst.type.RECEIVE)
+			))
+			.orderBy(desc(email.emailId))
+			.limit(size);
+
+		let list = await query.all();
+
+		if (this.shouldLoadAtt(params)) {
+			await this.emailAddAtt(c, list);
+		}
 
 		return list;
+	},
+
+	isLiteQuery(params) {
+		const lite = params.lite ?? params.fields ?? params.onlyCode;
+		return ['1', 'true', 'lite', 'code'].includes(String(lite).toLowerCase());
+	},
+
+	shouldLoadAtt(params) {
+		if (this.isLiteQuery(params) && params.withAtt == null) {
+			return false;
+		}
+		return !['0', 'false'].includes(String(params.withAtt ?? '1').toLowerCase());
+	},
+
+	liteEmailSelect() {
+		return {
+			emailId: email.emailId,
+			accountId: email.accountId,
+			userId: email.userId,
+			sendEmail: email.sendEmail,
+			name: email.name,
+			subject: email.subject,
+			code: email.code,
+			text: email.text,
+			toEmail: email.toEmail,
+			toName: email.toName,
+			type: email.type,
+			status: email.status,
+			unread: email.unread,
+			createTime: email.createTime,
+			isDel: email.isDel
+		};
 	},
 
 	async physicsDelete(c, params) {
