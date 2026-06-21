@@ -814,7 +814,7 @@ import {Icon} from "@iconify/vue";
 import {cvtR2Url} from "@/utils/convert.js";
 import {storeToRefs} from "pinia";
 import {debounce} from 'lodash-es'
-import {isDomain, isEmail} from "@/utils/verify-utils.js";
+import {isDomain, isEmail, normalizeEmail} from "@/utils/verify-utils.js";
 import loading from "@/components/loading/index.vue";
 import {getTextWidth} from "@/utils/text.js";
 import {fileToBase64} from "@/utils/file-utils.js"
@@ -1124,7 +1124,7 @@ function openForwardRules() {
 
 function emailAddTag(val) {
   const emails = Array.from(new Set(
-      val.split(/[,，]/).map(item => item.trim()).filter(item => item)
+      val.split(/[,，]/).map(item => normalizeEmail(item)).filter(item => item)
   ));
 
   forwardEmail.value.splice(forwardEmail.value.length - 1, 1)
@@ -1138,7 +1138,7 @@ function emailAddTag(val) {
 
 function ruleEmailAddTag(val) {
   const emails = Array.from(new Set(
-      val.split(/[,，]/).map(item => item.trim()).filter(item => item)
+      val.split(/[,，]/).map(item => normalizeEmail(item)).filter(item => item)
   ));
 
   ruleEmail.value.splice(ruleEmail.value.length - 1, 1)
@@ -1287,7 +1287,7 @@ function saveBlackList() {
 
 function banEmailAddTag(val) {
   const emails = Array.from(new Set(
-      val.split(/[,，]/).map(item => item.trim()).filter(item => item)
+      val.split(/[,，]/).map(item => normalizeEmail(item)).filter(item => item)
   ));
 
   blackListForm.value.blackFrom.splice(blackListForm.value.blackFrom.length - 1, 1)
@@ -1301,7 +1301,7 @@ function banEmailAddTag(val) {
 
 function aiCodeFilterAddTag(val) {
   const emails = Array.from(new Set(
-      val.split(/[,，]/).map(item => item.trim()).filter(item => item)
+      val.split(/[,，]/).map(item => normalizeEmail(item)).filter(item => item)
   ));
 
   aiCodeFilter.value.splice(aiCodeFilter.value.length - 1, 1)

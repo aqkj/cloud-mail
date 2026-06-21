@@ -383,7 +383,7 @@ import {Icon} from "@iconify/vue";
 import loading from "@/components/loading/index.vue";
 import {tzDayjs} from "@/utils/day.js";
 import {useSettingStore} from "@/store/setting.js";
-import {isEmail} from "@/utils/verify-utils.js";
+import {isEmail, normalizeEmail} from "@/utils/verify-utils.js";
 import {useRoleStore} from "@/store/role.js";
 import {useUserStore} from "@/store/user.js";
 import {useI18n} from 'vue-i18n';
@@ -693,6 +693,9 @@ function openAdd() {
 
 function submit() {
 
+  addForm.email = addForm.email.trim()
+  const email = normalizeEmail(addForm.email + addForm.suffix)
+
   if (!addForm.email) {
     ElMessage({
       message: t('emptyEmailMsg'),
@@ -702,7 +705,7 @@ function submit() {
     return
   }
 
-  if (!isEmail(addForm.email + addForm.suffix)) {
+  if (!isEmail(email)) {
     ElMessage({
       message: t('notEmailMsg'),
       type: "error",
@@ -740,7 +743,7 @@ function submit() {
 
   addLoading.value = true
   const form = {...addForm}
-  form.email = form.email + form.suffix
+  form.email = email
   userAdd(form).then(() => {
     addLoading.value = false
     addForm.email = ''

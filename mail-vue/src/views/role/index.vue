@@ -150,7 +150,7 @@ import loading from '@/components/loading/index.vue';
 import {useRoleStore} from "@/store/role.js";
 import {useUserStore} from "@/store/user.js";
 import {useSettingStore} from "@/store/setting.js";
-import {isEmail, isDomain} from "@/utils/verify-utils.js";
+import {isEmail, isDomain, normalizeEmail} from "@/utils/verify-utils.js";
 import {useI18n} from "vue-i18n";
 
 defineOptions({
@@ -219,7 +219,7 @@ function availDomainChange() {
 
 function banEmailAddTag(val) {
   const emails = Array.from(new Set(
-      val.split(/[,，]/).map(item => item.trim()).filter(item => item)
+      val.split(/[,，]/).map(item => item === '*' ? item.trim() : normalizeEmail(item)).filter(item => item)
   ));
 
   form.banEmail.splice(form.banEmail.length - 1, 1)

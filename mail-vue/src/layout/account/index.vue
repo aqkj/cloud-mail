@@ -1,8 +1,28 @@
 <template>
   <div class="account-box">
     <div class="head-opt">
-      <Icon v-perm="'account:add'" class="icon add" icon="ion:add-outline" width="23" height="23" @click="add"/>
-      <Icon class="icon refresh" icon="ion:reload" width="18" height="18" @click="refresh"/>
+      <div class="head-actions">
+        <Icon v-perm="'account:add'" class="icon add" icon="ion:add-outline" width="23" height="23" @click="add"/>
+        <Icon class="icon refresh" icon="ion:reload" width="18" height="18" @click="refresh"/>
+        <el-select v-model="queryParams.sortType" class="sort-select" size="small" @change="refresh">
+          <el-option :label="$t('defaultSort')" value="default"/>
+          <el-option :label="$t('newestFirst')" value="newest"/>
+          <el-option :label="$t('oldestFirst')" value="oldest"/>
+        </el-select>
+      </div>
+      <el-input
+          v-model="queryParams.keyword"
+          class="account-search"
+          clearable
+          size="small"
+          :placeholder="$t('searchAccount')"
+          @keyup.enter="refresh"
+          @clear="refresh"
+      >
+        <template #prefix>
+          <Icon icon="iconoir:search" width="16" height="16"/>
+        </template>
+      </el-input>
     </div>
     <el-scrollbar class="scrollbar" ref="scrollbarRef">
       <div v-infinite-scroll="getAccountList" :infinite-scroll-distance="600" :infinite-scroll-immediate="false">
@@ -137,7 +157,7 @@ import {
   accountSetAsTop
 } from "@/request/account.js";
 import {sleep} from "@/utils/time-utils.js"
-import {isEmail} from "@/utils/verify-utils.js";
+import {isEmail, normalizeEmail} from "@/utils/verify-utils.js";
 import {useSettingStore} from "@/store/setting.js";
 import {useAccountStore} from "@/store/account.js";
 import {useEmailStore} from "@/store/email.js";
@@ -175,9 +195,12 @@ const addForm = reactive({
   suffix: settingStore.domainList[0]
 })
 let skeletonRows = 10
-const queryParams = {
-  size: 30
-}
+const queryParams = reactive({
+  size: 30,
+  keyword: '',
+  sortType: 'default'
+})
+let searchTimer = null
 
 const mySelect = ref()
 
@@ -194,6 +217,11 @@ watch(() => settingStore.domainList, (list) => {
     addForm.suffix = list[0]
   }
 }, {immediate: true})
+
+watch(() => queryParams.keyword, () => {
+  clearTimeout(searchTimer)
+  searchTimer = setTimeout(refresh, 300)
+})
 
 
 const openSelect = () => {
@@ -324,6 +352,7 @@ function remove(account) {
 }
 
 function refresh() {
+  clearTimeout(searchTimer)
   if (loading.value) {
     return
   }
@@ -359,8 +388,12 @@ function setAsTop(account, index) {
       plain: true,
     })
 
-    const [item] = accounts.splice(index, 1);
-    accounts.splice(1, 0, item);
+    if (queryParams.sortType === 'default' && !queryParams.keyword) {
+      const [item] = accounts.splice(index, 1);
+      accounts.splice(1, 0, item);
+    } else {
+      refresh();
+    }
 
   });
 }
@@ -397,8 +430,9 @@ function getAccountList() {
 
   const accountId = accounts.length > 0 ? accounts.at(-1).accountId : 0;
   const lastSort = accounts.length > 0 ? accounts.at(-1).sort : null;
+  const keyword = normalizeEmail(queryParams.keyword);
 
-  accountList(accountId, queryParams.size, lastSort).then(async list => {
+  accountList(accountId, queryParams.size, lastSort, keyword, queryParams.sortType).then(async list => {
 
     let end = Date.now();
     let duration = end - start;
@@ -409,7 +443,7 @@ function getAccountList() {
     if (list.length < queryParams.size) {
       noLoading.value = true
     }
-    if (accounts.length === 0) {
+    if (accounts.length === 0 && list.length > 0 && !accountStore.currentAccount.email) {
       accountStore.currentAccount = list[0]
     }
 
@@ -427,6 +461,10 @@ function getAccountList() {
 
 function submit() {
 
+  addForm.email = addForm.email.trim()
+  const email = normalizeEmail(addForm.email + addForm.suffix)
+  const emailPrefix = email.split('@')[0]
+
   if (!addForm.email) {
     ElMessage({
       message: t('emptyEmailMsg'),
@@ -436,7 +474,7 @@ function submit() {
     return
   }
 
-  if (addForm.email.length < settingStore.settings.minEmailPrefix) {
+  if (emailPrefix.length < settingStore.settings.minEmailPrefix) {
     ElMessage({
       message: t('minEmailPrefix', {msg: settingStore.settings.minEmailPrefix}),
       type: 'error',
@@ -445,7 +483,7 @@ function submit() {
     return
   }
 
-  if (!isEmail(addForm.email + addForm.suffix)) {
+  if (!isEmail(email)) {
     ElMessage({
       message: t('notEmailMsg'),
       type: "error",
@@ -480,11 +518,18 @@ function submit() {
   }
 
   addLoading.value = true
-  accountAdd(addForm.email + addForm.suffix, verifyToken).then(account => {
+  accountAdd(email, verifyToken).then(account => {
     addLoading.value = false
     showAdd.value = false
     addForm.email = ''
-    accounts.push(account)
+    const keyword = normalizeEmail(queryParams.keyword).toLowerCase()
+    if (!keyword || account.email.toLowerCase().includes(keyword)) {
+      if (queryParams.sortType === 'newest') {
+        accounts.unshift(account)
+      } else {
+        accounts.push(account)
+      }
+    }
     verifyToken = ''
     settingStore.settings.addVerifyOpen = account.addVerifyOpen
     ElMessage({
@@ -525,11 +570,19 @@ path[fill="#ffdda1"] {
 
   .head-opt {
     display: flex;
+    flex-direction: column;
+    gap: 8px;
     align-items: center;
-    height: 38px;
+    height: 82px;
     box-shadow: var(--header-actions-border);
-    padding-left: 10px;
-    padding-right: 10px;
+    padding: 8px 10px;
+
+    .head-actions {
+      display: flex;
+      align-items: center;
+      width: 100%;
+      min-height: 24px;
+    }
 
     .icon {
       cursor: pointer;
@@ -546,14 +599,23 @@ path[fill="#ffdda1"] {
     .head-opt:not(.add) .refresh {
       margin-left: 5px;
     }
+
+    .sort-select {
+      width: 128px;
+      margin-left: auto;
+    }
+
+    .account-search {
+      width: 100%;
+    }
   }
 
   .scrollbar {
     width: 100%;
-    height: calc(100% - 38px);
+    height: calc(100% - 82px);
     overflow: auto;
     @media (max-width: 767px) {
-      height: calc(100% - 98px);
+      height: calc(100% - 142px);
     }
 
     .empty {

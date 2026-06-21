@@ -23,6 +23,8 @@ const roleService = {
 
 		let roleRow = await orm(c).select().from(role).where(eq(role.name, name)).get();
 
+		banEmail = banEmail.map(item => item === '*' ? item : verifyUtils.normalizeEmail(item));
+
 		const notEmailIndex = banEmail.findIndex(item => (!verifyUtils.isEmail(item) && !verifyUtils.isDomain(item)) && item !== "*");
 
 		if (notEmailIndex > -1) {
@@ -71,6 +73,8 @@ const roleService = {
 		}
 
 		delete params.isDefault
+
+		banEmail = banEmail.map(item => item === '*' ? item : verifyUtils.normalizeEmail(item));
 
 		const notEmailIndex = banEmail.findIndex(item => (!verifyUtils.isEmail(item) && !verifyUtils.isDomain(item)) && item !== "*")
 

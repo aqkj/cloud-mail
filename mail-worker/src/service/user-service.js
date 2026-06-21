@@ -18,6 +18,8 @@ import { t } from '../i18n/i18n'
 import reqUtils from '../utils/req-utils';
 import {oauth} from "../entity/oauth";
 import oauthService from "./oauth-service";
+import verifyUtils from '../utils/verify-utils';
+import domainUtils from '../utils/domain-uitls';
 
 const userService = {
 
@@ -66,6 +68,7 @@ const userService = {
 	},
 
 	selectByEmail(c, email) {
+		email = verifyUtils.normalizeEmail(email);
 		return orm(c).select().from(user).where(
 			and(
 				eq(user.email, email),
@@ -79,6 +82,7 @@ const userService = {
 	},
 
 	selectByEmailIncludeDel(c, email) {
+		email = verifyUtils.normalizeEmail(email);
 		return orm(c).select().from(user).where(sql`${user.email} COLLATE NOCASE = ${email}`).get();
 	},
 
@@ -304,9 +308,14 @@ const userService = {
 
 	async add(c, params) {
 
-		const { email, type, password } = params;
+		let { email, type, password } = params;
+		email = verifyUtils.normalizeEmail(email);
 
-		if (!c.env.domain.includes(emailUtils.getDomain(email))) {
+		if (!verifyUtils.isEmail(email)) {
+			throw new BizError(t('notEmail'));
+		}
+
+		if (!domainUtils.hasDomain(c.env.domain, emailUtils.getDomain(email))) {
 			throw new BizError(t('notEmailDomain'));
 		}
 

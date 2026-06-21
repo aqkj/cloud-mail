@@ -152,7 +152,7 @@ import {computed, nextTick, reactive, ref} from "vue";
 import {login} from "@/request/login.js";
 import {register} from "@/request/login.js";
 import {websiteConfig} from "@/request/setting.js";
-import {isEmail} from "@/utils/verify-utils.js";
+import {isEmail, normalizeEmail} from "@/utils/verify-utils.js";
 import {useSettingStore} from "@/store/setting.js";
 import {useAccountStore} from "@/store/account.js";
 import {useUserStore} from "@/store/user.js";
@@ -254,11 +254,11 @@ const openSelect = () => {
 }
 
 const getFullEmail = (email) => {
-  return hideLoginDomain.value ? email : email + suffix.value
+  return normalizeEmail(hideLoginDomain.value ? email : email + suffix.value)
 }
 
 const getEmailName = (email) => {
-  return email.split('@')[0]
+  return normalizeEmail(email).split('@')[0]
 }
 
 function linuxDoLogin() {

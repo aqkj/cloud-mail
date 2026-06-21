@@ -9,6 +9,7 @@ import BizError from '../error/biz-error';
 import {t} from '../i18n/i18n'
 import verifyRecordService from './verify-record-service';
 import userContext from '../security/user-context';
+import verifyUtils from '../utils/verify-utils';
 
 const settingService = {
 
@@ -126,7 +127,7 @@ const settingService = {
 
 	async set(c, params) {
 		const settingData = await this.query(c);
-		let resendTokens = { ...settingData.resendTokens, ...params.resendTokens };
+		let resendTokens = { ...settingData.resendTokens, ...(params.resendTokens || {}) };
 		Object.keys(resendTokens).forEach(domain => {
 			if (!resendTokens[domain]) delete resendTokens[domain];
 		});
@@ -139,9 +140,45 @@ const settingService = {
 			params.aiCodeFilter = params.aiCodeFilter + '';
 		}
 
+		if (params.forwardEmail != null) {
+			params.forwardEmail = this.normalizeEmailList(params.forwardEmail);
+		}
+
+		if (params.ruleEmail != null) {
+			params.ruleEmail = this.normalizeEmailList(params.ruleEmail);
+		}
+
+		if (params.aiCodeFilter != null) {
+			params.aiCodeFilter = this.normalizeEmailOrDomainList(params.aiCodeFilter);
+		}
+
 		params.resendTokens = JSON.stringify(resendTokens);
 		await orm(c).update(setting).set({ ...params }).returning().get();
 		await this.refresh(c);
+	},
+
+	normalizeEmailList(value) {
+		const list = Array.isArray(value) ? value : String(value || '').split(',');
+		return Array.from(new Set(
+			list.map(item => verifyUtils.normalizeEmail(item)).filter(Boolean)
+		)).map(item => {
+			if (!verifyUtils.isEmail(item)) {
+				throw new BizError(t('notEmail'));
+			}
+			return item;
+		}).join(',');
+	},
+
+	normalizeEmailOrDomainList(value) {
+		const list = Array.isArray(value) ? value : String(value || '').split(',');
+		return Array.from(new Set(
+			list.map(item => verifyUtils.normalizeEmail(item)).filter(Boolean)
+		)).map(item => {
+			if (!verifyUtils.isEmail(item) && !verifyUtils.isDomain(item)) {
+				throw new BizError(t('notEmail'));
+			}
+			return item;
+		}).join(',');
 	},
 
 	async deleteBackground(c) {
@@ -191,7 +228,8 @@ const settingService = {
 
 
 	async setBlacklist(c, params) {
-		const { blackSubject, blackContent, blackFrom  } = params
+		let { blackSubject, blackContent, blackFrom  } = params
+		blackFrom = this.normalizeEmailOrDomainList(blackFrom);
 		await orm(c).update(setting).set({ blackSubject, blackContent, blackFrom }).run();
 		await this.refresh(c);
 		return this.get(c);

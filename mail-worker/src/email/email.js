@@ -128,6 +128,14 @@ export async function email(message, env, ctx) {
 			}
 		}
 
+		const finalStatus = account ? emailConst.status.RECEIVE : emailConst.status.NOONE;
+		const hasAttachments = attachments.length > 0;
+
+		if (!hasAttachments) {
+			params.isDel = isDel.NORMAL;
+			params.status = finalStatus;
+		}
+
 		let emailRow = await emailService.receive({ env }, params, cidAttachments, r2Domain);
 
 		attachments.forEach(attachment => {
@@ -144,7 +152,16 @@ export async function email(message, env, ctx) {
 			console.error(e);
 		}
 
-		emailRow = await emailService.completeReceive({ env }, account ? emailConst.status.RECEIVE : emailConst.status.NOONE, emailRow.emailId);
+		if (hasAttachments) {
+			emailRow = await emailService.completeReceive({ env }, finalStatus, emailRow.emailId);
+		}
+
+		const latestCachePromise = emailService.putLatestReceiveCache({ env }, emailRow).catch(e => console.error('写入最新邮件缓存失败: ', e));
+		if (ctx?.waitUntil) {
+			ctx.waitUntil(latestCachePromise);
+		} else {
+			await latestCachePromise;
+		}
 
 
 		if (ruleType === settingConst.ruleType.RULE) {

@@ -12,6 +12,7 @@ import turnstileService from './turnstile-service';
 import roleService from './role-service';
 import { t } from '../i18n/i18n';
 import verifyRecordService from './verify-record-service';
+import domainUtils from '../utils/domain-uitls';
 
 const accountService = {
 
@@ -20,6 +21,7 @@ const accountService = {
 		const { addEmailVerify , addEmail, manyEmail, addVerifyCount, minEmailPrefix, emailPrefixFilter } = await settingService.query(c);
 
 		let { email, token } = params;
+		email = verifyUtils.normalizeEmail(email);
 
 
 		if (!(addEmail === settingConst.addEmail.OPEN && manyEmail === settingConst.manyEmail.OPEN)) {
@@ -35,7 +37,7 @@ const accountService = {
 			throw new BizError(t('notEmail'));
 		}
 
-		if (!c.env.domain.includes(emailUtils.getDomain(email))) {
+		if (!domainUtils.hasDomain(c.env.domain, emailUtils.getDomain(email))) {
 			throw new BizError(t('notExistDomain'));
 		}
 
@@ -57,10 +59,10 @@ const accountService = {
 			throw new BizError(t('isRegAccount'));
 		}
 
-		const userRow = await userService.selectById(c, userId);
-		const roleRow = await roleService.selectById(c, userRow.type);
+		const userRow = c.get?.('user') || await userService.selectById(c, userId);
 
 		if (userRow.email !== c.env.admin) {
+			const roleRow = await roleService.selectById(c, userRow.type);
 
 			if (roleRow.accountCount > 0) {
 				const userAccountCount = await accountService.countUserAccount(c, userId)
@@ -100,16 +102,19 @@ const accountService = {
 	},
 
 	selectByEmailIncludeDel(c, email) {
+		email = verifyUtils.normalizeEmail(email);
 		return orm(c).select().from(account).where(sql`${account.email} COLLATE NOCASE = ${email}`).get();
 	},
 
 	list(c, params, userId) {
 
-		let { accountId, size, lastSort } = params;
+		let { accountId, size, lastSort, keyword, sortType = 'default' } = params;
 
 		accountId = Number(accountId);
 		size = Number(size);
 		lastSort = Number(lastSort);
+		keyword = verifyUtils.normalizeEmail(keyword);
+		sortType = String(sortType || 'default');
 
 		if (size > 30) {
 			size = 30;
@@ -123,18 +128,49 @@ const accountService = {
 			lastSort = 9999999999;
 		}
 
-		return orm(c).select().from(account).where(
-			and(
-				eq(account.userId, userId),
-				eq(account.isDel, isDel.NORMAL),
-					or(
-						lt(account.sort, lastSort),
-						and(
-							eq(account.sort, lastSort),
-							gt(account.accountId, accountId)
-						)
-					))
+		const whereList = [
+			eq(account.userId, userId),
+			eq(account.isDel, isDel.NORMAL)
+		];
+
+		if (keyword) {
+			whereList.push(sql`instr(lower(${account.email}), lower(${keyword})) > 0`);
+		}
+
+		if (sortType === 'newest') {
+			if (accountId) {
+				whereList.push(lt(account.accountId, accountId));
+			}
+			return orm(c).select().from(account)
+				.where(and(...whereList))
+				.orderBy(desc(account.accountId))
+				.limit(size)
+				.all();
+		}
+
+		if (sortType === 'oldest') {
+			if (accountId) {
+				whereList.push(gt(account.accountId, accountId));
+			}
+			return orm(c).select().from(account)
+				.where(and(...whereList))
+				.orderBy(asc(account.accountId))
+				.limit(size)
+				.all();
+		}
+
+		whereList.push(
+			or(
+				lt(account.sort, lastSort),
+				and(
+					eq(account.sort, lastSort),
+					gt(account.accountId, accountId)
 				)
+			)
+		);
+
+		return orm(c).select().from(account)
+			.where(and(...whereList))
 			.orderBy(desc(account.sort), asc(account.accountId))
 			.limit(size)
 			.all();

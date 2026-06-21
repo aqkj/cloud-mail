@@ -780,6 +780,11 @@ const emailService = {
 			allReceive = accountRow.allReceive;
 		}
 
+		const cachedList = await this.latestFromCache(c, { emailId, accountId, allReceive, size }, userId, params);
+		if (cachedList) {
+			return cachedList;
+		}
+
 		const liteQuery = this.isLiteQuery(params);
 		const selectFields = liteQuery ? this.liteEmailSelect() : {...email};
 		const skipAccountJoin = liteQuery && !allReceive;
@@ -820,6 +825,30 @@ const emailService = {
 		return ['1', 'true', 'lite', 'code'].includes(String(lite).toLowerCase());
 	},
 
+	useLatestCache(params) {
+		return this.isLiteQuery(params) && ['1', 'true', 'kv', 'cache'].includes(String(params.cache ?? params.hot ?? '0').toLowerCase());
+	},
+
+	async latestFromCache(c, params, userId, rawParams) {
+		if (!this.useLatestCache(rawParams) || !c.env.kv) {
+			return null;
+		}
+
+		const { emailId, accountId, allReceive, size } = params;
+		if (size !== 1) {
+			return null;
+		}
+
+		const key = allReceive ? this.latestUserCacheKey(userId) : this.latestAccountCacheKey(userId, accountId);
+		const emailRow = await c.env.kv.get(key, { type: 'json' });
+
+		if (!emailRow || emailRow.emailId <= emailId) {
+			return [];
+		}
+
+		return [emailRow];
+	},
+
 	shouldLoadAtt(params) {
 		if (this.isLiteQuery(params) && params.withAtt == null) {
 			return false;
@@ -845,6 +874,60 @@ const emailService = {
 			createTime: email.createTime,
 			isDel: email.isDel
 		};
+	},
+
+	latestAccountCacheKey(userId, accountId) {
+		return kvConst.EMAIL_LATEST_ACCOUNT + userId + ':' + accountId;
+	},
+
+	latestUserCacheKey(userId) {
+		return kvConst.EMAIL_LATEST_USER + userId;
+	},
+
+	toLiteEmailRow(emailRow) {
+		return {
+			emailId: emailRow.emailId,
+			accountId: emailRow.accountId,
+			userId: emailRow.userId,
+			sendEmail: emailRow.sendEmail,
+			name: emailRow.name,
+			subject: emailRow.subject,
+			code: emailRow.code,
+			text: emailRow.text,
+			toEmail: emailRow.toEmail,
+			toName: emailRow.toName,
+			type: emailRow.type,
+			status: emailRow.status,
+			unread: emailRow.unread,
+			createTime: emailRow.createTime,
+			isDel: emailRow.isDel
+		};
+	},
+
+	async putLatestReceiveCache(c, emailRow) {
+		if (!c.env.kv || !emailRow || emailRow.userId <= 0 || emailRow.accountId <= 0) {
+			return;
+		}
+
+		if (emailRow.type !== emailConst.type.RECEIVE || emailRow.isDel !== isDel.NORMAL || emailRow.status !== emailConst.status.RECEIVE) {
+			return;
+		}
+
+		const cacheRow = this.toLiteEmailRow(emailRow);
+		const options = { expirationTtl: 60 * 15 };
+
+		await Promise.all([
+			this.putNewerLatestCache(c, this.latestAccountCacheKey(emailRow.userId, emailRow.accountId), cacheRow, options),
+			this.putNewerLatestCache(c, this.latestUserCacheKey(emailRow.userId), cacheRow, options)
+		]);
+	},
+
+	async putNewerLatestCache(c, key, emailRow, options) {
+		const oldRow = await c.env.kv.get(key, { type: 'json' });
+		if (oldRow && oldRow.emailId > emailRow.emailId) {
+			return;
+		}
+		await c.env.kv.put(key, JSON.stringify(emailRow), options);
 	},
 
 	async physicsDelete(c, params) {

@@ -98,7 +98,7 @@ import {h, nextTick, onMounted, onUnmounted, reactive, ref, toRaw, computed} fro
 import {Icon} from "@iconify/vue";
 import {useUserStore} from "@/store/user.js";
 import {emailSend} from "@/request/email.js";
-import {isEmail} from "@/utils/verify-utils.js";
+import {isEmail, normalizeEmail} from "@/utils/verify-utils.js";
 import {useAccountStore} from "@/store/account.js";
 import {useEmailStore} from "@/store/email.js";
 import {fileToBase64, formatBytes} from "@/utils/file-utils.js";
@@ -235,7 +235,7 @@ function inputChange(value) {
 function addTagChange(val) {
 
   const emails = Array.from(new Set(
-      val.split(/[,，]/).map(item => item.trim()).filter(item => item)
+      val.split(/[,，]/).map(item => normalizeEmail(item)).filter(item => item)
   ));
 
   form.receiveEmail.splice(form.receiveEmail.length - 1, 1)

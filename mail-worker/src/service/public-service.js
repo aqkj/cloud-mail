@@ -14,6 +14,7 @@ import { isDel, roleConst } from '../const/entity-const';
 import email from '../entity/email';
 import userService from './user-service';
 import KvConst from '../const/kv-const';
+import domainUtils from '../utils/domain-uitls';
 
 const publicService = {
 
@@ -100,11 +101,13 @@ const publicService = {
 		if (list.length === 0) return;
 
 		for (const emailRow of list) {
+			emailRow.email = verifyUtils.normalizeEmail(emailRow.email);
+
 			if (!verifyUtils.isEmail(emailRow.email)) {
 				throw new BizError(t('notEmail'));
 			}
 
-			if (!c.env.domain.includes(emailUtils.getDomain(emailRow.email))) {
+			if (!domainUtils.hasDomain(c.env.domain, emailUtils.getDomain(emailRow.email))) {
 				throw new BizError(t('notEmailDomain'));
 			}
 
