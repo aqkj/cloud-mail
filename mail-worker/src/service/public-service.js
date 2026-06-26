@@ -1,7 +1,7 @@
 import BizError from '../error/biz-error';
 import orm from '../entity/orm';
 import { v4 as uuidv4 } from 'uuid';
-import { and, asc, desc, eq, sql } from 'drizzle-orm';
+import { and, asc, desc, eq } from 'drizzle-orm';
 import saltHashUtils from '../utils/crypto-utils';
 import cryptoUtils from '../utils/crypto-utils';
 import emailUtils from '../utils/email-utils';
@@ -15,8 +15,14 @@ import email from '../entity/email';
 import userService from './user-service';
 import KvConst from '../const/kv-const';
 import domainUtils from '../utils/domain-uitls';
+import { matchesLikePattern } from '../utils/sql-utils';
+import emailService from './email-service';
 
 const publicService = {
+
+	latestCode(c, params) {
+		return emailService.publicLatestByToEmail(c, params);
+	},
 
 	async emailList(c, params) {
 
@@ -52,23 +58,28 @@ const publicService = {
 		let conditions = []
 
 		if (toEmail) {
-			conditions.push(sql`${email.toEmail} COLLATE NOCASE LIKE ${toEmail}`)
+			const condition = matchesLikePattern(email.toEmail, toEmail)
+			if (condition) conditions.push(condition)
 		}
 
 		if (sendEmail) {
-			conditions.push(sql`${email.sendEmail} COLLATE NOCASE LIKE ${sendEmail}`)
+			const condition = matchesLikePattern(email.sendEmail, sendEmail)
+			if (condition) conditions.push(condition)
 		}
 
 		if (sendName) {
-			conditions.push(sql`${email.name} COLLATE NOCASE LIKE ${sendName}`)
+			const condition = matchesLikePattern(email.name, sendName)
+			if (condition) conditions.push(condition)
 		}
 
 		if (subject) {
-			conditions.push(sql`${email.subject} COLLATE NOCASE LIKE ${subject}`)
+			const condition = matchesLikePattern(email.subject, subject)
+			if (condition) conditions.push(condition)
 		}
 
 		if (content) {
-			conditions.push(sql`${email.content} COLLATE NOCASE LIKE ${content}`)
+			const condition = matchesLikePattern(email.content, content)
+			if (condition) conditions.push(condition)
 		}
 
 		if (type || type === 0) {

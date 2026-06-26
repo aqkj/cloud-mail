@@ -1,11 +1,12 @@
 import orm from '../entity/orm';
 import regKey from '../entity/reg-key';
-import { inArray, like, eq, desc, sql, or } from 'drizzle-orm';
+import { inArray, eq, desc, sql, or } from 'drizzle-orm';
 import roleService from './role-service';
 import BizError from '../error/biz-error';
 import { formatDetailDate, toUtc } from '../utils/date-uitil';
 import userService from './user-service';
 import { t } from '../i18n/i18n.js';
+import { startsWithText } from '../utils/sql-utils';
 
 const regKeyService = {
 
@@ -62,7 +63,7 @@ const regKeyService = {
 		let query = orm(c).select().from(regKey)
 
 		if (code) {
-			query = query.where(like(regKey.code, `${code}%`))
+			query = query.where(startsWithText(regKey.code, code))
 		}
 
 		const regKeyList = await query.orderBy(desc(regKey.regKeyId)).all();

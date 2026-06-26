@@ -38,6 +38,7 @@ const dbInit = {
 		const INDEX_SQL_LIST = [
 			`CREATE INDEX IF NOT EXISTS idx_email_latest_account ON email(user_id, account_id, type, is_del, email_id DESC);`,
 			`CREATE INDEX IF NOT EXISTS idx_email_latest_all ON email(user_id, type, is_del, email_id DESC);`,
+			`CREATE INDEX IF NOT EXISTS idx_email_to_latest ON email(to_email COLLATE NOCASE, type, is_del, email_id DESC);`,
 			`CREATE INDEX IF NOT EXISTS idx_attachments_email_type ON attachments(email_id, type);`,
 			`CREATE INDEX IF NOT EXISTS idx_star_user_email ON star(user_id, email_id);`,
 			`CREATE INDEX IF NOT EXISTS idx_account_user_del_sort_id ON account(user_id, is_del, sort DESC, account_id ASC);`,

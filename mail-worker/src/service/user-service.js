@@ -20,6 +20,7 @@ import {oauth} from "../entity/oauth";
 import oauthService from "./oauth-service";
 import verifyUtils from '../utils/verify-utils';
 import domainUtils from '../utils/domain-uitls';
+import { containsText } from '../utils/sql-utils';
 
 const userService = {
 
@@ -134,7 +135,7 @@ const userService = {
 
 
 		if (email) {
-			conditions.push(sql`${user.email} COLLATE NOCASE LIKE ${'%'+ email + '%'}`);
+			conditions.push(containsText(user.email, email));
 		}
 
 

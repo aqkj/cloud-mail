@@ -1,7 +1,7 @@
 import orm from '../entity/orm';
 import email from '../entity/email';
 import { attConst, emailConst, isDel, settingConst } from '../const/entity-const';
-import { and, desc, eq, gt, inArray, lt, count, asc, sql, ne, or, like, lte, gte } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, lt, count, asc, sql, ne, or, lte, gte } from 'drizzle-orm';
 import { star } from '../entity/star';
 import settingService from './setting-service';
 import accountService from './account-service';
@@ -19,11 +19,19 @@ import dayjs from 'dayjs';
 import kvConst from '../const/kv-const';
 import { t } from '../i18n/i18n'
 import domainUtils from '../utils/domain-uitls';
+import verifyUtils from '../utils/verify-utils';
 import account from "../entity/account";
 import { att } from '../entity/att';
 import telegramService from './telegram-service';
+import { containsText, equalsText, startsWithText } from '../utils/sql-utils';
 
 const emailService = {
+
+	pushCondition(conditions, condition) {
+		if (condition) {
+			conditions.push(condition);
+		}
+	},
 
 	async list(c, params, userId) {
 
@@ -673,6 +681,7 @@ const emailService = {
 		for (const emailData of receiveEmailList) {
 
 			const emailRow = await orm(c).insert(email).values(emailData).returning().get();
+			await this.putLatestReceiveCache(c, emailRow);
 
 			//设置附件保存
 			for (const attRow of attList) {
@@ -829,18 +838,32 @@ const emailService = {
 		return this.isLiteQuery(params) && ['1', 'true', 'kv', 'cache'].includes(String(params.cache ?? params.hot ?? '0').toLowerCase());
 	},
 
+	useLatestCacheOnly(params) {
+		return ['1', 'true', 'kv', 'cache'].includes(String(params.cacheOnly ?? params.kvOnly ?? '0').toLowerCase());
+	},
+
 	async latestFromCache(c, params, userId, rawParams) {
-		if (!this.useLatestCache(rawParams) || !c.env.kv) {
-			return null;
+		const cacheOnly = this.useLatestCacheOnly(rawParams);
+
+		if (!this.useLatestCache(rawParams)) {
+			return cacheOnly ? [] : null;
 		}
 
 		const { emailId, accountId, allReceive, size } = params;
 		if (size !== 1) {
-			return null;
+			return cacheOnly ? [] : null;
+		}
+
+		if (!c.env.kv) {
+			return cacheOnly ? [] : null;
 		}
 
 		const key = allReceive ? this.latestUserCacheKey(userId) : this.latestAccountCacheKey(userId, accountId);
 		const emailRow = await c.env.kv.get(key, { type: 'json' });
+
+		if (!emailRow) {
+			return cacheOnly ? [] : null;
+		}
 
 		if (!emailRow || emailRow.emailId <= emailId) {
 			return [];
@@ -884,6 +907,10 @@ const emailService = {
 		return kvConst.EMAIL_LATEST_USER + userId;
 	},
 
+	latestToCacheKey(toEmail) {
+		return kvConst.EMAIL_LATEST_TO + String(toEmail || '').trim().toLowerCase();
+	},
+
 	toLiteEmailRow(emailRow) {
 		return {
 			emailId: emailRow.emailId,
@@ -904,22 +931,48 @@ const emailService = {
 		};
 	},
 
+	toPublicLatestEmailRow(emailRow) {
+		return {
+			emailId: emailRow.emailId,
+			code: emailRow.code,
+			subject: emailRow.subject,
+			text: emailRow.text,
+			content: emailRow.content,
+			toEmail: emailRow.toEmail,
+			createTime: emailRow.createTime
+		};
+	},
+
 	async putLatestReceiveCache(c, emailRow) {
-		if (!c.env.kv || !emailRow || emailRow.userId <= 0 || emailRow.accountId <= 0) {
+		if (!c.env.kv || !emailRow) {
 			return;
 		}
 
-		if (emailRow.type !== emailConst.type.RECEIVE || emailRow.isDel !== isDel.NORMAL || emailRow.status !== emailConst.status.RECEIVE) {
+		if (emailRow.type !== emailConst.type.RECEIVE || emailRow.isDel !== isDel.NORMAL) {
 			return;
 		}
 
-		const cacheRow = this.toLiteEmailRow(emailRow);
+		const cacheableStatus = [emailConst.status.RECEIVE, emailConst.status.NOONE].includes(emailRow.status);
+		if (!cacheableStatus) {
+			return;
+		}
+
 		const options = { expirationTtl: 60 * 15 };
+		const cacheWrites = [];
 
-		await Promise.all([
-			this.putNewerLatestCache(c, this.latestAccountCacheKey(emailRow.userId, emailRow.accountId), cacheRow, options),
-			this.putNewerLatestCache(c, this.latestUserCacheKey(emailRow.userId), cacheRow, options)
-		]);
+		if (emailRow.toEmail) {
+			cacheWrites.push(this.putNewerLatestCache(c, this.latestToCacheKey(emailRow.toEmail), this.toPublicLatestEmailRow(emailRow), options));
+		}
+
+		if (emailRow.status === emailConst.status.RECEIVE && emailRow.userId > 0 && emailRow.accountId > 0) {
+			const cacheRow = this.toLiteEmailRow(emailRow);
+			cacheWrites.push(
+				this.putNewerLatestCache(c, this.latestAccountCacheKey(emailRow.userId, emailRow.accountId), cacheRow, options),
+				this.putNewerLatestCache(c, this.latestUserCacheKey(emailRow.userId), cacheRow, options)
+			);
+		}
+
+		await Promise.all(cacheWrites);
 	},
 
 	async putNewerLatestCache(c, key, emailRow, options) {
@@ -928,6 +981,54 @@ const emailService = {
 			return;
 		}
 		await c.env.kv.put(key, JSON.stringify(emailRow), options);
+	},
+
+	async publicLatestByToEmail(c, params) {
+		const toEmail = verifyUtils.normalizeEmail(params.toEmail);
+		const sinceEmailId = Number(params.emailId || params.sinceEmailId || 0);
+		const useCache = !['0', 'false'].includes(String(params.cache ?? '1').toLowerCase());
+		const cacheOnly = this.useLatestCacheOnly(params);
+
+		if (!verifyUtils.isEmail(toEmail)) {
+			throw new BizError(t('notEmail'));
+		}
+
+		if (useCache && c.env.kv) {
+			const emailRow = await c.env.kv.get(this.latestToCacheKey(toEmail), { type: 'json' });
+			if (emailRow && emailRow.emailId > sinceEmailId) {
+				return [emailRow];
+			}
+			if (emailRow && emailRow.emailId <= sinceEmailId) {
+				return [];
+			}
+			if (cacheOnly) {
+				return [];
+			}
+		} else if (cacheOnly) {
+			return [];
+		}
+
+		return await orm(c)
+			.select({
+				emailId: email.emailId,
+				code: email.code,
+				subject: email.subject,
+				text: email.text,
+				content: email.content,
+				toEmail: email.toEmail,
+				createTime: email.createTime
+			})
+			.from(email)
+			.where(and(
+				sql`${email.toEmail} COLLATE NOCASE = ${toEmail}`,
+				eq(email.type, emailConst.type.RECEIVE),
+				eq(email.isDel, isDel.NORMAL),
+				inArray(email.status, [emailConst.status.RECEIVE, emailConst.status.NOONE]),
+				gt(email.emailId, sinceEmailId)
+			))
+			.orderBy(desc(email.emailId))
+			.limit(1)
+			.all();
 	},
 
 	async physicsDelete(c, params) {
@@ -1010,24 +1111,26 @@ const emailService = {
 		}
 
 		if (userEmail) {
-			conditions.push(sql`${user.email} COLLATE NOCASE LIKE ${'%'+ userEmail + '%'}`);
+			this.pushCondition(conditions, containsText(user.email, userEmail));
 		}
 
 		if (accountEmail) {
+			const toEmailCondition = containsText(email.toEmail, accountEmail);
+			const sendEmailCondition = containsText(email.sendEmail, accountEmail);
 			conditions.push(
 				or(
-					sql`${email.toEmail} COLLATE NOCASE LIKE ${'%'+ accountEmail + '%'}`,
-					sql`${email.sendEmail} COLLATE NOCASE LIKE ${'%'+ accountEmail + '%'}`,
+					toEmailCondition,
+					sendEmailCondition,
 				)
 			)
 		}
 
 		if (name) {
-			conditions.push(sql`${email.name} COLLATE NOCASE LIKE ${'%'+ name + '%'}`);
+			this.pushCondition(conditions, containsText(email.name, name));
 		}
 
 		if (subject) {
-			conditions.push(sql`${email.subject} COLLATE NOCASE LIKE ${'%'+ subject + '%'}`);
+			this.pushCondition(conditions, containsText(email.subject, subject));
 		}
 
 		conditions.push(ne(email.status, emailConst.status.SAVING));
@@ -1134,25 +1237,24 @@ const emailService = {
 	async batchDelete(c, params) {
 		let { sendName, sendEmail, toEmail, subject, startTime, endTime, type  } = params
 
-		let right = type === 'left' || type === 'include'
-		let left = type === 'include'
+		const matcher = type === 'include' ? containsText : type === 'left' ? startsWithText : equalsText;
 
 		const conditions = []
 
 		if (sendName) {
-			conditions.push(like(email.name,`${left ? '%' : ''}${sendName}${right ? '%' : ''}`))
+			this.pushCondition(conditions, matcher(email.name, sendName))
 		}
 
 		if (subject) {
-			conditions.push(like(email.subject,`${left ? '%' : ''}${subject}${right ? '%' : ''}`))
+			this.pushCondition(conditions, matcher(email.subject, subject))
 		}
 
 		if (sendEmail) {
-			conditions.push(like(email.sendEmail,`${left ? '%' : ''}${sendEmail}${right ? '%' : ''}`))
+			this.pushCondition(conditions, matcher(email.sendEmail, sendEmail))
 		}
 
 		if (toEmail) {
-			conditions.push(like(email.toEmail,`${left ? '%' : ''}${toEmail}${right ? '%' : ''}`))
+			this.pushCondition(conditions, matcher(email.toEmail, toEmail))
 		}
 
 		if (startTime && endTime) {
