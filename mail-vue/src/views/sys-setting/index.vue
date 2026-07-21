@@ -71,6 +71,20 @@
                   </el-button>
                 </div>
               </div>
+              <div class="setting-item">
+                <div>
+                  <span>{{ $t('emailDomain') }}</span>
+                  <el-tooltip effect="dark" :content="$t('emailDomainDesc')">
+                    <Icon class="warning" icon="fe:warning" width="18" height="18"/>
+                  </el-tooltip>
+                </div>
+                <div class="forward">
+                  <span>{{ $t('domainCount', {count: settingStore.domainList.length}) }}</span>
+                  <el-button class="opt-button" size="small" type="primary" @click="openDomainManager">
+                    <Icon icon="fluent:settings-48-regular" width="18" height="18"/>
+                  </el-button>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -634,6 +648,44 @@
                            :show-overflow-tooltip="true"/>
         </el-table>
       </el-dialog>
+      <el-dialog class="domain-dialog" v-model="domainManagerShow" :title="$t('emailDomain')">
+        <div class="domain-manager" v-loading="domainLoading">
+          <div class="domain-meta">
+            <el-tag>{{ $t('domainKvKey') }}: {{ domainInfo.key }}</el-tag>
+            <el-tag type="success">{{ $t('domainCount', {count: domainInfo.count}) }}</el-tag>
+          </div>
+          <div class="domain-toolbar">
+            <el-input clearable v-model="domainKeyword" :placeholder="$t('searchDomain')"/>
+            <el-button @click="loadDomainList">{{ $t('refresh') }}</el-button>
+            <el-button type="primary" @click="saveDomainsToKv">{{ $t('saveToKv') }}</el-button>
+          </div>
+          <div class="domain-add">
+            <el-input-tag v-model="domainAddList" tag-type="success" :placeholder="$t('addDomainPlaceholder')"
+                          @add-tag="domainAddTag"/>
+            <el-button type="primary" :loading="domainLoading" @click="saveDomainAdd">{{ $t('add') }}</el-button>
+          </div>
+          <el-input
+              class="domain-batch"
+              v-model="domainBatchText"
+              :autosize="{ minRows: 3, maxRows: 6 }"
+              type="textarea"
+              :placeholder="$t('batchDomainPlaceholder')"
+          />
+          <el-button class="domain-batch-btn" type="primary" :loading="domainLoading" @click="saveDomainBatch">
+            {{ $t('batchImport') }}
+          </el-button>
+          <el-table class="domain-table" :data="filteredDomains" height="340">
+            <el-table-column property="domain" :label="$t('domain')" :show-overflow-tooltip="true"/>
+            <el-table-column :label="$t('action')" fixed="right" width="100">
+              <template #default="{row}">
+                <el-button type="danger" link @click="deleteDomainRow(row.domain)">
+                  {{ $t('delete') }}
+                </el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+      </el-dialog>
       <el-dialog v-model="regVerifyCountShow" :title="$t('rulesVerifyTitle',{count: regVerifyCount})"
                  @closed="regVerifyCount = setting.regVerifyCount">
         <form>
@@ -805,7 +857,17 @@
 
 <script setup>
 import {computed, defineOptions, nextTick, reactive, ref} from "vue";
-import {deleteBackground, setBackground, setBlackList, settingQuery, settingSet} from "@/request/setting.js";
+import {
+  deleteBackground,
+  domainAdd,
+  domainDelete,
+  domainEnsureKv,
+  domainList as queryDomainList,
+  setBackground,
+  setBlackList,
+  settingQuery,
+  settingSet
+} from "@/request/setting.js";
 import {useSettingStore} from "@/store/setting.js";
 import {useUiStore} from "@/store/ui.js";
 import {useUserStore} from "@/store/user.js";
@@ -847,6 +909,8 @@ const thirdEmailShow = ref(false)
 const forwardRulesShow = ref(false)
 const emailPrefixShow = ref(false)
 const showResendList = ref(false)
+const domainManagerShow = ref(false)
+const domainLoading = ref(false)
 const settingStore = useSettingStore();
 const uiStore = useUiStore();
 const {settings: setting} = storeToRefs(settingStore);
@@ -930,11 +994,26 @@ const ruleEmail = ref([])
 const tgMsgFrom = ref('')
 const tgMsgTo = ref('')
 const tgMsgText = ref('')
+const domainKeyword = ref('')
+const domainAddList = ref([])
+const domainBatchText = ref('')
+const domainInfo = reactive({
+  key: 'cloud-mail:domains',
+  domains: [],
+  domainList: [],
+  count: 0
+})
 
 const tgMsgFromOption = [{label: t('show'), value: 'show'}, {label: t('hide'), value: 'hide'}, {label: t('onlyName'), value:'only-name'}]
 const tgMsgToOption = [{label: t('show'), value: 'show'}, {label: t('hide'), value: 'hide'}]
 const tgMsgTextOption = [{label: t('show'), value: 'show'}, {label: t('hide'), value: 'hide'}]
 const tgMsgLabelWidth = computed(() => locale.value === 'en' ? '120px' : '100px');
+const filteredDomains = computed(() => {
+  const keyword = normalizeDomain(domainKeyword.value);
+  return domainInfo.domains
+      .filter(domain => !keyword || domain.includes(keyword))
+      .map(domain => ({domain}));
+})
 
 getSettings()
 getUpdate()
@@ -964,6 +1043,158 @@ function getSettings() {
   })
 }
 
+function normalizeDomain(domain) {
+  return normalizeEmail(domain)
+      .replace(/^@+/, '')
+      .replace(/\.$/, '')
+      .toLowerCase();
+}
+
+function parseDomainInput(value) {
+  const list = Array.isArray(value) ? value : String(value || '').split(/[\n,，;；\s]+/)
+  return Array.from(new Set(
+      list.map(item => normalizeDomain(item)).filter(Boolean)
+  ));
+}
+
+function validateDomainInput(value) {
+  const domains = parseDomainInput(value);
+
+  if (domains.length === 0) {
+    ElMessage({
+      message: t('emptyDomainMsg'),
+      type: 'error',
+      plain: true,
+    })
+    return null;
+  }
+
+  const invalid = domains.find(domain => !isDomain(domain));
+  if (invalid) {
+    ElMessage({
+      message: t('invalidDomainMsg', {domain: invalid}),
+      type: 'error',
+      plain: true,
+    })
+    return null;
+  }
+
+  return domains;
+}
+
+function setDomainInfo(data) {
+  domainInfo.key = data.key
+  domainInfo.domains = data.domains || []
+  domainInfo.domainList = data.domainList || []
+  domainInfo.count = data.count || 0
+  settingStore.domainList = domainInfo.domainList
+  setting.value.domainList = domainInfo.domainList
+
+  if (!resendTokenForm.domain || !domainInfo.domainList.includes(resendTokenForm.domain)) {
+    resendTokenForm.domain = domainInfo.domainList[0]
+  }
+}
+
+function openDomainManager() {
+  domainManagerShow.value = true
+  loadDomainList()
+}
+
+function loadDomainList() {
+  domainLoading.value = true
+  queryDomainList().then(setDomainInfo).finally(() => {
+    domainLoading.value = false
+  })
+}
+
+function domainAddTag(val) {
+  const domains = validateDomainInput(val);
+  domainAddList.value.splice(domainAddList.value.length - 1, 1)
+
+  if (!domains) {
+    return
+  }
+
+  domains.forEach(domain => {
+    if (!domainAddList.value.includes(domain)) {
+      domainAddList.value.push(domain)
+    }
+  })
+}
+
+function saveDomainAdd() {
+  const domains = validateDomainInput(domainAddList.value);
+  if (!domains) {
+    return
+  }
+
+  domainLoading.value = true
+  domainAdd(domains).then(data => {
+    setDomainInfo(data)
+    domainAddList.value = []
+    ElMessage({
+      message: t('addSuccessMsg'),
+      type: 'success',
+      plain: true,
+    })
+  }).finally(() => {
+    domainLoading.value = false
+  })
+}
+
+function saveDomainBatch() {
+  const domains = validateDomainInput(domainBatchText.value);
+  if (!domains) {
+    return
+  }
+
+  domainLoading.value = true
+  domainAdd(domains).then(data => {
+    setDomainInfo(data)
+    domainBatchText.value = ''
+    ElMessage({
+      message: t('addSuccessMsg'),
+      type: 'success',
+      plain: true,
+    })
+  }).finally(() => {
+    domainLoading.value = false
+  })
+}
+
+function saveDomainsToKv() {
+  domainLoading.value = true
+  domainEnsureKv().then(data => {
+    setDomainInfo(data)
+    ElMessage({
+      message: t('saveSuccessMsg'),
+      type: 'success',
+      plain: true,
+    })
+  }).finally(() => {
+    domainLoading.value = false
+  })
+}
+
+function deleteDomainRow(domain) {
+  ElMessageBox.confirm(t('delConfirm', {msg: domain}), {
+    confirmButtonText: t('confirm'),
+    cancelButtonText: t('cancel'),
+    type: 'warning'
+  }).then(() => {
+    domainLoading.value = true
+    domainDelete([domain]).then(data => {
+      setDomainInfo(data)
+      ElMessage({
+        message: t('delSuccessMsg'),
+        type: 'success',
+        plain: true,
+      })
+    }).finally(() => {
+      domainLoading.value = false
+    })
+  })
+}
 
 function openNoticePopup() {
   uiStore.showNotice()
@@ -1719,6 +1950,14 @@ function editSetting(settingForm, refreshStatus = true) {
   }
 }
 
+:deep(.domain-dialog.el-dialog) {
+  width: min(760px, calc(100% - 40px)) !important;
+  @media (max-width: 540px) {
+    margin-right: 20px !important;
+    margin-left: 20px !important;
+  }
+}
+
 :deep(.notice-popup.el-dialog) {
   min-height: 300px;
   width: 820px !important;
@@ -1856,6 +2095,48 @@ function editSetting(settingForm, refreshStatus = true) {
 .prefix-filter {
   display: flex;
   flex-direction: column;
+}
+
+.domain-manager {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.domain-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.domain-toolbar {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 10px;
+  @media (max-width: 620px) {
+    grid-template-columns: 1fr;
+  }
+}
+
+.domain-add {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  @media (max-width: 620px) {
+    grid-template-columns: 1fr;
+  }
+}
+
+.domain-batch {
+  width: 100%;
+}
+
+.domain-batch-btn {
+  width: 100%;
+}
+
+.domain-table {
+  width: 100%;
 }
 
 .s3-button {

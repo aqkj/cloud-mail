@@ -10,6 +10,7 @@ import {t} from '../i18n/i18n'
 import verifyRecordService from './verify-record-service';
 import userContext from '../security/user-context';
 import verifyUtils from '../utils/verify-utils';
+import domainService from './domain-service';
 
 const settingService = {
 
@@ -32,22 +33,7 @@ const settingService = {
 			throw new BizError('数据库未初始化 Database not initialized.');
 		}
 
-		let domainList = c.env.domain;
-
-		if (typeof domainList === 'string') {
-			try {
-				domainList = JSON.parse(domainList)
-			} catch (error) {
-				throw new BizError(t('notJsonDomain'));
-			}
-		}
-
-		if (!c.env.domain) {
-			throw new BizError(t('noDomainVariable'));
-		}
-
-		domainList = domainList.map(item => '@' + item);
-		setting.domainList = domainList;
+		setting.domainList = await domainService.publicList(c);
 
 
 		let linuxdoSwitch = c.env.linuxdo_switch;

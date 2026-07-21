@@ -19,7 +19,7 @@ import reqUtils from '../utils/req-utils';
 import {oauth} from "../entity/oauth";
 import oauthService from "./oauth-service";
 import verifyUtils from '../utils/verify-utils';
-import domainUtils from '../utils/domain-uitls';
+import domainService from './domain-service';
 import { containsText } from '../utils/sql-utils';
 
 const userService = {
@@ -316,7 +316,7 @@ const userService = {
 			throw new BizError(t('notEmail'));
 		}
 
-		if (!domainUtils.hasDomain(c.env.domain, emailUtils.getDomain(email))) {
+		if (!await domainService.hasDomain(c, emailUtils.getDomain(email))) {
 			throw new BizError(t('notEmailDomain'));
 		}
 

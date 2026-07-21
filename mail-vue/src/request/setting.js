@@ -23,3 +23,23 @@ export function deleteBackground() {
 export function setBlackList(params) {
     return http.put('/setting/setBlacklist', params)
 }
+
+export function domainList() {
+    return http.get('/setting/domain/list')
+}
+
+export function domainAdd(domains) {
+    return http.post('/setting/domain/add', {domains})
+}
+
+export function domainDelete(domains) {
+    return http.post('/setting/domain/delete', {domains})
+}
+
+export function domainReplace(domains) {
+    return http.put('/setting/domain/replace', {domains})
+}
+
+export function domainEnsureKv() {
+    return http.put('/setting/domain/ensureKv')
+}

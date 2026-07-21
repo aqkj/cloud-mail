@@ -14,7 +14,8 @@
 | `D1_DATABASE_ID`        |  ✅  | 您的 D1 数据库的 ID                                     |
 | `KV_NAMESPACE_ID`       |  ✅  | 您的 KV 命名空间的 ID                                   |
 | `R2_BUCKET_NAME`        |  ✅  | 您的 R2 存储桶的名称                                    |
-| `DOMAIN`                |  ✅  | 您要用于邮件服务的域名（例如 `["xx.xx"]，多域名用,分隔`）        |
+| `DOMAIN`                |  ❌  | 兼容旧配置，邮箱域名 JSON 数组（例如 `["xx.xx"]`），域名较多时不要使用        |
+| `DOMAIN_KV_KEY`         |  ❌  | 自定义 KV 域名列表 key；不配置时默认使用 `cloud-mail:domains`        |
 | `ADMIN`                 |  ✅  | 您的管理员邮箱地址（例如 `admin@example.com`）      |
 | `JWT_SECRET`            |  ✅  | 用于生成和验证 JWT 的随机长字符串                     |
 | `INIT_URL`              |  ❌  | （可选）部署后用于初始化数据库的 Worker URL（格式参考下述手动初始化）           |
@@ -36,3 +37,31 @@
 **运行工作流**
 1. 然后在Action页面手动运行工作流，后续同步上游后会自动部署到 Cloudflare Workers。如未配置 `INIT_URL`，则需要手动访问 `https://你的项目域名/api/init/你的jwt_secret` 进行数据库初始化。
 2. 自动同步上游可使用bot或者手动点击Sync Upstream按钮。
+
+**域名列表放到 KV**
+
+当域名列表超过 Cloudflare Worker 环境变量大小限制时，可以把域名保存到 KV。默认 key 为 `cloud-mail:domains`，也可以在 Action 变量中配置 `DOMAIN_KV_KEY` 自定义 key。
+
+1. 准备 JSON 文件，格式必须是裸域名数组，不要带 `@`：
+
+```json
+[
+  "example.com",
+  "example2.com"
+]
+```
+
+2. 写入已绑定到 Worker 的 KV 命名空间，key 示例使用 `cloud-mail:domains`：
+
+```bash
+cd mail-worker
+pnpm wrangler kv key put "cloud-mail:domains" --path domains.json --namespace-id <KV_NAMESPACE_ID>
+```
+
+3. 如需使用非默认 key，在 GitHub Secrets 或 Variables 中配置：
+
+| 名称 | 示例 |
+| ---- | ---- |
+| `DOMAIN_KV_KEY` | `cloud-mail:domains` |
+
+程序会优先从 KV 读取域名列表；`DOMAIN_KV_KEY` 未配置时使用默认 key `cloud-mail:domains`。如果默认 key 不存在，则兼容读取旧的 `DOMAIN` 环境变量。部署后也可以在后台系统设置页面管理域名，系统会写入 KV。

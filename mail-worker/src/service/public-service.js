@@ -14,9 +14,9 @@ import { isDel, roleConst } from '../const/entity-const';
 import email from '../entity/email';
 import userService from './user-service';
 import KvConst from '../const/kv-const';
-import domainUtils from '../utils/domain-uitls';
 import { matchesLikePattern } from '../utils/sql-utils';
 import emailService from './email-service';
+import domainService from './domain-service';
 
 const publicService = {
 
@@ -118,7 +118,7 @@ const publicService = {
 				throw new BizError(t('notEmail'));
 			}
 
-			if (!domainUtils.hasDomain(c.env.domain, emailUtils.getDomain(emailRow.email))) {
+			if (!await domainService.hasDomain(c, emailUtils.getDomain(emailRow.email))) {
 				throw new BizError(t('notEmailDomain'));
 			}
 

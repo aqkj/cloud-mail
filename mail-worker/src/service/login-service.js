@@ -19,7 +19,7 @@ import dayjs from 'dayjs';
 import { toUtc } from '../utils/date-uitil';
 import { t } from '../i18n/i18n.js';
 import verifyRecordService from './verify-record-service';
-import domainUtils from '../utils/domain-uitls';
+import domainService from './domain-service';
 
 const loginService = {
 
@@ -63,7 +63,7 @@ const loginService = {
 			throw new BizError(t('pwdMinLength'));
 		}
 
-		if (!domainUtils.hasDomain(c.env.domain, emailUtils.getDomain(email))) {
+		if (!await domainService.hasDomain(c, emailUtils.getDomain(email))) {
 			throw new BizError(t('notEmailDomain'));
 		}
 
