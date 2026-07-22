@@ -27,6 +27,10 @@ const zh = {
 	imageAttLimit: '图片不能超过10个',
 	attLimit: '附件不能超过10个',
 	tooManyRecipients: 'Cloudflare Email每次最多发送给{{count}}个收件人',
+	autoCleanConditionRequired: '启用定时清理至少需要一个清理条件',
+	categoryNameRequired: '分类名称不能为空',
+	categoryRequired: '请选择邮件分类',
+	categoryRuleKeywordRequired: '分类规则关键字不能为空',
 	pwdLengthLimit: '密码长度超出限制',
 	emailLengthLimit: '邮箱长度超出限制',
 	minEmailPrefix: '邮箱名至少{{msg}}位',
@@ -103,7 +107,9 @@ const zh = {
 		"系统设置": "系统设置",
 		"设置查看": "设置查看",
 		"设置修改": "设置修改",
-		'发件重置': '发件重置'
+		'发件重置': '发件重置',
+		'分类查看': '分类查看',
+		'分类管理': '分类管理'
 	}
 }
 

@@ -26,10 +26,12 @@ import telegramService from './telegram-service';
 import { containsText, equalsText, startsWithText } from '../utils/sql-utils';
 import domainService from './domain-service';
 import cloudflareEmailService from './cloudflare-email-service';
+import emailCategoryService from './email-category-service';
 
 const MAX_CLOUDFLARE_RECIPIENTS = 50;
 const MAX_INLINE_ATTACHMENTS = 10;
 const MAX_FILE_ATTACHMENTS = 10;
+const CLEAN_MATCH_TYPES = new Set(['eq', 'left', 'include']);
 
 const emailService = {
 
@@ -39,9 +41,86 @@ const emailService = {
 		}
 	},
 
+	defaultAutoCleanConfig() {
+		return {
+			enabled: false,
+			params: this.normalizeBatchDeleteParams({}),
+			lastRunTime: '',
+			lastRunCount: 0
+		};
+	},
+
+	normalizeBatchDeleteParams(params = {}) {
+		return {
+			sendName: String(params.sendName || '').trim(),
+			sendEmail: String(params.sendEmail || '').trim(),
+			toEmail: String(params.toEmail || '').trim(),
+			subject: String(params.subject || '').trim(),
+			startTime: String(params.startTime || '').trim(),
+			endTime: String(params.endTime || '').trim(),
+			type: CLEAN_MATCH_TYPES.has(params.type) ? params.type : 'eq'
+		};
+	},
+
+	hasBatchDeleteCondition(params = {}) {
+		return Boolean(
+			params.sendName ||
+			params.sendEmail ||
+			params.toEmail ||
+			params.subject ||
+			(params.startTime && params.endTime)
+		);
+	},
+
+	async getAutoClean(c) {
+		const config = await c.env.kv.get(kvConst.EMAIL_AUTO_CLEAN, { type: 'json' });
+		if (!config) {
+			return this.defaultAutoCleanConfig();
+		}
+
+		return {
+			...this.defaultAutoCleanConfig(),
+			...config,
+			params: this.normalizeBatchDeleteParams(config.params || {})
+		};
+	},
+
+	async setAutoClean(c, params = {}) {
+		const config = {
+			...this.defaultAutoCleanConfig(),
+			enabled: Boolean(params.enabled),
+			params: this.normalizeBatchDeleteParams(params.params || {})
+		};
+
+		if (config.enabled && !this.hasBatchDeleteCondition(config.params)) {
+			throw new BizError(t('autoCleanConditionRequired'));
+		}
+
+		await c.env.kv.put(kvConst.EMAIL_AUTO_CLEAN, JSON.stringify(config));
+		return config;
+	},
+
+	async autoClean(c) {
+		const config = await this.getAutoClean(c);
+
+		if (!config.enabled || !this.hasBatchDeleteCondition(config.params)) {
+			return { total: 0 };
+		}
+
+		const result = await this.batchDelete(c, config.params);
+		const nextConfig = {
+			...config,
+			lastRunTime: dayjs().format('YYYY-MM-DD HH:mm:ss'),
+			lastRunCount: result.total
+		};
+
+		await c.env.kv.put(kvConst.EMAIL_AUTO_CLEAN, JSON.stringify(nextConfig));
+		return result;
+	},
+
 	async list(c, params, userId) {
 
-		let { emailId, type, accountId, size, timeSort, allReceive } = params;
+		let { emailId, type, accountId, size, timeSort, allReceive, categoryId } = params;
 
 		size = Number(size);
 		emailId = Number(emailId);
@@ -77,9 +156,10 @@ const emailService = {
 		}
 
 		if (this.isLiteQuery(params)) {
-			return await this.listLite(c, { emailId, type, accountId, size, timeSort, allReceive }, userId);
+			return await this.listLite(c, { emailId, type, accountId, size, timeSort, allReceive, categoryId }, userId);
 		}
 
+		const categoryCondition = emailCategoryService.filterCondition(categoryId);
 		const query = orm(c)
 			.select({
 				...email,
@@ -103,7 +183,8 @@ const emailService = {
 					timeSort ? gt(email.emailId, emailId) : lt(email.emailId, emailId),
 					eq(email.type, type),
 					eq(email.isDel, isDel.NORMAL),
-					eq(account.isDel, isDel.NORMAL)
+					eq(account.isDel, isDel.NORMAL),
+					categoryCondition || eq(1,1)
 				)
 			);
 
@@ -126,7 +207,8 @@ const emailService = {
 					eq(email.userId, userId),
 					eq(email.type, type),
 					eq(email.isDel, isDel.NORMAL),
-					eq(account.isDel, isDel.NORMAL)
+					eq(account.isDel, isDel.NORMAL),
+					categoryCondition || eq(1,1)
 				)
 		).get();
 
@@ -135,7 +217,8 @@ const emailService = {
 				allReceive ? eq(1,1) : eq(email.accountId, accountId),
 				eq(email.userId, userId),
 				eq(email.type, type),
-				eq(email.isDel, isDel.NORMAL)
+				eq(email.isDel, isDel.NORMAL),
+				categoryCondition || eq(1,1)
 			))
 			.orderBy(desc(email.emailId)).limit(1).get();
 
@@ -161,7 +244,8 @@ const emailService = {
 	},
 
 	async listLite(c, params, userId) {
-		const { emailId, type, accountId, size, timeSort, allReceive } = params;
+		const { emailId, type, accountId, size, timeSort, allReceive, categoryId } = params;
+		const categoryCondition = emailCategoryService.filterCondition(categoryId);
 
 		let query = orm(c)
 			.select(this.liteEmailSelect())
@@ -180,7 +264,8 @@ const emailService = {
 				eq(email.userId, userId),
 				timeSort ? gt(email.emailId, emailId) : lt(email.emailId, emailId),
 				eq(email.type, type),
-				eq(email.isDel, isDel.NORMAL)
+				eq(email.isDel, isDel.NORMAL),
+				categoryCondition || eq(1,1)
 			)
 		);
 
@@ -191,6 +276,7 @@ const emailService = {
 		}
 
 		const list = await query.limit(size).all();
+		await emailCategoryService.emailAddCategory(c, list);
 		const latestEmail = (timeSort ? list.at(-1) : list[0]) || {
 			emailId: 0,
 			accountId: accountId,
@@ -210,9 +296,12 @@ const emailService = {
 			.run();
 	},
 
-	receive(c, params, cidAttList, r2domain) {
+	async receive(c, params, cidAttList, r2domain) {
 		params.content = this.imgReplace(params.content, cidAttList, r2domain)
-		return orm(c).insert(email).values({ ...params }).returning().get();
+		const emailRow = await orm(c).insert(email).values({ ...params }).returning().get();
+		await emailCategoryService.classifyEmail(c, emailRow);
+		await emailCategoryService.emailAddCategory(c, [emailRow]);
+		return emailRow;
 	},
 
 	//邮件发送
@@ -430,6 +519,8 @@ const emailService = {
 
 		const attList = await attService.selectByEmailIds(c, [emailResult.emailId]);
 		emailResult.attList = attList;
+		await emailCategoryService.classifyEmail(c, emailResult);
+		await emailCategoryService.emailAddCategory(c, [emailResult]);
 
 		//如果全是站内接收方，直接写入数据库
 		if (allInternal) {
@@ -713,7 +804,6 @@ const emailService = {
 		for (const emailData of receiveEmailList) {
 
 			const emailRow = await orm(c).insert(email).values(emailData).returning().get();
-			await this.putLatestReceiveCache(c, emailRow);
 
 			//设置附件保存
 			for (const attRow of attList) {
@@ -724,6 +814,10 @@ const emailService = {
 				attValues.attId = null;
 				await orm(c).insert(att).values(attValues).run();
 			}
+
+			await emailCategoryService.classifyEmail(c, emailRow);
+			await emailCategoryService.emailAddCategory(c, [emailRow]);
+			await this.putLatestReceiveCache(c, emailRow);
 
 		}
 
@@ -959,7 +1053,8 @@ const emailService = {
 			status: emailRow.status,
 			unread: emailRow.unread,
 			createTime: emailRow.createTime,
-			isDel: emailRow.isDel
+			isDel: emailRow.isDel,
+			categoryList: emailRow.categoryList || []
 		};
 	},
 
@@ -1068,10 +1163,13 @@ const emailService = {
 		emailIds = emailIds.split(',').map(Number);
 		await attService.removeByEmailIds(c, emailIds);
 		await starService.removeByEmailIds(c, emailIds);
+		await emailCategoryService.removeByEmailIds(c, emailIds);
 		await orm(c).delete(email).where(inArray(email.emailId, emailIds)).run();
 	},
 
 	async physicsDeleteUserIds(c, userIds) {
+		const emailIds = await orm(c).select({ emailId: email.emailId }).from(email).where(inArray(email.userId, userIds)).all();
+		await emailCategoryService.removeByEmailIds(c, emailIds.map(item => item.emailId));
 		await attService.removeByUserIds(c, userIds);
 		await orm(c).delete(email).where(inArray(email.userId, userIds)).run();
 	},
@@ -1103,7 +1201,7 @@ const emailService = {
 
 	async allList(c, params) {
 
-		let { emailId, size, name, subject, accountEmail, userEmail, type, timeSort } = params;
+		let { emailId, size, name, subject, accountEmail, userEmail, type, timeSort, categoryId } = params;
 
 		size = Number(size);
 
@@ -1165,6 +1263,8 @@ const emailService = {
 			this.pushCondition(conditions, containsText(email.subject, subject));
 		}
 
+		this.pushCondition(conditions, emailCategoryService.filterCondition(categoryId));
+
 		conditions.push(ne(email.status, emailConst.status.SAVING));
 
 		const countConditions = [...conditions];
@@ -1217,16 +1317,39 @@ const emailService = {
 
 	async allEmailLatest(c, params) {
 
-		const { emailId } = params;
+		const { emailId, name, subject, accountEmail, userEmail, categoryId } = params;
+		const conditions = [
+			gt(email.emailId, emailId),
+			eq(email.type, emailConst.type.RECEIVE),
+			ne(email.status, emailConst.status.SAVING)
+		];
+
+		if (userEmail) {
+			this.pushCondition(conditions, containsText(user.email, userEmail));
+		}
+
+		if (accountEmail) {
+			conditions.push(
+				or(
+					containsText(email.toEmail, accountEmail),
+					containsText(email.sendEmail, accountEmail)
+				)
+			);
+		}
+
+		if (name) {
+			this.pushCondition(conditions, containsText(email.name, name));
+		}
+
+		if (subject) {
+			this.pushCondition(conditions, containsText(email.subject, subject));
+		}
+
+		this.pushCondition(conditions, emailCategoryService.filterCondition(categoryId));
 
 		let list = await orm(c).select({...email, userEmail: user.email}).from(email)
 			.leftJoin(user, eq(email.userId, user.userId))
-			.where(
-				and(
-					gt(email.emailId, emailId),
-					eq(email.type, emailConst.type.RECEIVE),
-					ne(email.status, emailConst.status.SAVING)
-				))
+			.where(and(...conditions))
 			.orderBy(desc(email.emailId))
 			.limit(20);
 
@@ -1248,6 +1371,8 @@ const emailService = {
 				emailRow.attList = atts;
 			});
 		}
+
+		await emailCategoryService.emailAddCategory(c, list);
 	},
 
 	async restoreByUserId(c, userId) {
@@ -1255,10 +1380,12 @@ const emailService = {
 	},
 
 	async completeReceive(c, status, emailId) {
-		return await orm(c).update(email).set({
+		const emailRow = await orm(c).update(email).set({
 			isDel: isDel.NORMAL,
 			status: status
 		}).where(eq(email.emailId, emailId)).returning().get();
+		await emailCategoryService.emailAddCategory(c, [emailRow]);
+		return emailRow;
 	},
 
 	async completeReceiveAll(c) {
@@ -1267,6 +1394,7 @@ const emailService = {
 	},
 
 	async batchDelete(c, params) {
+		params = this.normalizeBatchDeleteParams(params);
 		let { sendName, sendEmail, toEmail, subject, startTime, endTime, type  } = params
 
 		const matcher = type === 'include' ? containsText : type === 'left' ? startsWithText : equalsText;
@@ -1294,8 +1422,8 @@ const emailService = {
 			conditions.push(lte(email.createTime,`${endTime}`))
 		}
 
-		if (conditions.length === 0) {
-			return;
+		if (!this.hasBatchDeleteCondition(params)) {
+			return { total: 0 };
 		}
 
 		const emailIdsRow = await orm(c).select({emailId: email.emailId}).from(email).where(conditions.length > 1 ? and(...conditions) : conditions[0]).all();
@@ -1303,15 +1431,19 @@ const emailService = {
 		const emailIds = emailIdsRow.map(row => row.emailId);
 
 		if (emailIds.length === 0){
-			return;
+			return { total: 0 };
 		}
 
 		await attService.removeByEmailIds(c, emailIds);
+		await emailCategoryService.removeByEmailIds(c, emailIds);
 
 		await orm(c).delete(email).where(conditions.length > 1 ? and(...conditions) : conditions[0]).run();
+		return { total: emailIds.length };
 	},
 
 	async physicsDeleteByAccountId(c, accountId) {
+		const emailIds = await orm(c).select({ emailId: email.emailId }).from(email).where(eq(email.accountId, accountId)).all();
+		await emailCategoryService.removeByEmailIds(c, emailIds.map(item => item.emailId));
 		await attService.removeByAccountId(c, accountId);
 		await orm(c).delete(email).where(eq(email.accountId, accountId)).run();
 	},

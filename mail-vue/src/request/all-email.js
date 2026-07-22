@@ -12,6 +12,14 @@ export function allEmailBatchDelete(params) {
     return http.delete('/allEmail/batchDelete', {params: params} )
 }
 
-export function allEmailLatest(emailId) {
-    return http.get('/allEmail/latest', {params: {emailId}, noMsg: true, timeout: 35 * 1000})
+export function allEmailAutoClean() {
+    return http.get('/allEmail/autoClean')
+}
+
+export function allEmailAutoCleanSet(params) {
+    return http.put('/allEmail/autoClean', params)
+}
+
+export function allEmailLatest(emailId, params = {}) {
+    return http.get('/allEmail/latest', {params: {emailId, ...params}, noMsg: true, timeout: 35 * 1000})
 }

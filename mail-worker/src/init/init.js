@@ -30,8 +30,60 @@ const dbInit = {
 		await this.v2_9DB(c);
 		await this.v3_0DB(c);
 		await this.v3_1DB(c);
+		await this.v3_2DB(c);
 		await settingService.refresh(c);
 		return c.text('success');
+	},
+
+	async v3_2DB(c) {
+		const SQL_LIST = [
+			`CREATE TABLE IF NOT EXISTS email_category (
+				category_id INTEGER PRIMARY KEY AUTOINCREMENT,
+				name TEXT NOT NULL,
+				color TEXT NOT NULL DEFAULT '',
+				icon TEXT NOT NULL DEFAULT '',
+				sort INTEGER NOT NULL DEFAULT 0,
+				enabled INTEGER NOT NULL DEFAULT 1,
+				create_time DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+				update_time DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL
+			);`,
+			`CREATE TABLE IF NOT EXISTS email_category_rule (
+				rule_id INTEGER PRIMARY KEY AUTOINCREMENT,
+				category_id INTEGER NOT NULL,
+				field TEXT NOT NULL,
+				match_type TEXT NOT NULL,
+				keyword TEXT NOT NULL,
+				case_sensitive INTEGER NOT NULL DEFAULT 0,
+				enabled INTEGER NOT NULL DEFAULT 1,
+				priority INTEGER NOT NULL DEFAULT 0,
+				create_time DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL
+			);`,
+			`CREATE TABLE IF NOT EXISTS email_category_rel (
+				category_id INTEGER NOT NULL,
+				email_id INTEGER NOT NULL,
+				rule_id INTEGER NOT NULL DEFAULT 0,
+				create_time DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+				PRIMARY KEY (category_id, email_id)
+			);`,
+			`CREATE INDEX IF NOT EXISTS idx_email_category_rel_email_id ON email_category_rel(email_id);`,
+			`CREATE INDEX IF NOT EXISTS idx_email_category_rel_category_id ON email_category_rel(category_id);`,
+			`CREATE INDEX IF NOT EXISTS idx_email_category_rule_category_id ON email_category_rule(category_id);`,
+			`CREATE INDEX IF NOT EXISTS idx_email_category_rule_enabled ON email_category_rule(enabled);`,
+			`INSERT INTO perm (name, perm_key, pid, type, sort)
+				SELECT '分类查看', 'category:query', 27, 2, 2
+				WHERE NOT EXISTS (SELECT 1 FROM perm WHERE perm_key = 'category:query');`,
+			`INSERT INTO perm (name, perm_key, pid, type, sort)
+				SELECT '分类管理', 'category:set', 27, 2, 3
+				WHERE NOT EXISTS (SELECT 1 FROM perm WHERE perm_key = 'category:set');`
+		];
+
+		for (const sql of SQL_LIST) {
+			try {
+				await c.env.db.prepare(sql).run();
+			} catch (e) {
+				console.warn(`跳过分类初始化：${e.message}`);
+			}
+		}
 	},
 
 	async v3_1DB(c) {

@@ -26,6 +26,19 @@
                 </div>
               </div>
               <div class="receive"><span class="source">{{$t('recipient')}}</span><span class="receive-email">{{  formateReceive(email.recipient) }}</span></div>
+              <div class="category-line" v-if="email.categoryList?.length">
+                <span class="source">{{$t('category')}}</span>
+                <span class="category-tags">
+                  <span
+                      class="category-tag"
+                      v-for="category in email.categoryList"
+                      :key="category.categoryId"
+                      :style="categoryStyle(category)"
+                  >
+                    {{ category.name }}
+                  </span>
+                </span>
+              </div>
               <div class="date">
                 <div>{{ formatDetailDate(email.createTime) }}</div>
               </div>
@@ -131,6 +144,15 @@ function openReply() {
 
 function openForward() {
   uiStore.writerRef.openForward(email)
+}
+
+function categoryStyle(category) {
+  const color = category.color || '#409EFF';
+  return {
+    color,
+    background: `${color}1A`,
+    borderColor: `${color}66`
+  };
 }
 
 function toMessage(message) {
@@ -391,6 +413,26 @@ const handleDelete = () => {
         }
         span:nth-child(2) {
           color: var(--regular-text-color);
+        }
+      }
+
+      .category-line {
+        display: flex;
+        margin-bottom: 6px;
+
+        .category-tags {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 6px;
+        }
+
+        .category-tag {
+          border: 1px solid;
+          border-radius: 999px;
+          font-size: 12px;
+          font-weight: 500;
+          line-height: 18px;
+          padding: 0 8px;
         }
       }
 

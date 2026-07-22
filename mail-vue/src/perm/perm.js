@@ -109,6 +109,16 @@ const routers = {
             menu: true
         }
     }],
+    'category:query': [{
+        path: '/mail-category',
+        name: 'category',
+        component: () => import('@/views/category/index.vue'),
+        meta: {
+            title: 'mailCategory',
+            name: 'category',
+            menu: true
+        }
+    }],
     'analysis:query': [{
         path: '/analysis',
         name: 'analysis',

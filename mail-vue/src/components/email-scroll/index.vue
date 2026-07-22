@@ -83,6 +83,19 @@
                     <span class="email-subject" :style="(item.unread === EmailUnreadEnum.UNREAD && showUnread)  ? 'font-weight: bold' : ''">
                       <div class="unread" v-if="!isMobile && (item.unread === EmailUnreadEnum.UNREAD && showUnread) "/>
                       <span v-if="item.code" class="code-tag" @click.stop="copyCode(item.code)">[{{ t('codeLabel') }}{{ item.code }}]</span>
+                      <span class="category-tags" v-if="item.categoryList?.length">
+                        <span
+                            class="category-tag"
+                            :class="{ clickable: props.allowCategorySearch }"
+                            v-for="category in item.categoryList.slice(0, 2)"
+                            :key="category.categoryId"
+                            :style="categoryStyle(category)"
+                            @click.stop="handleCategorySearch(category)"
+                        >
+                          {{ category.name }}
+                        </span>
+                        <span class="category-more" v-if="item.categoryList.length > 2">+{{ item.categoryList.length - 2 }}</span>
+                      </span>
                       <span class="subject-text">
                         <slot name="subject" :email="item" >
                           {{ item.subject || '\u200B' }}
@@ -294,10 +307,14 @@ const props = defineProps({
   showUnread: {
     type: Boolean,
     default: false
+  },
+  allowCategorySearch: {
+    type: Boolean,
+    default: false
   }
 })
 
-const emit = defineEmits(['jump', 'refresh-before', 'delete-draft', 'right-search'])
+const emit = defineEmits(['jump', 'refresh-before', 'delete-draft', 'right-search', 'category-search'])
 const {t} = useI18n()
 const settingStore = useSettingStore()
 const uiStore = useUiStore();
@@ -492,6 +509,20 @@ function openReply(email) {
 
 function openForward(email) {
   uiStore.writerRef.openForward(email)
+}
+
+function categoryStyle(category) {
+  const color = category.color || '#409EFF';
+  return {
+    color,
+    background: `${color}1A`,
+    borderColor: `${color}66`
+  };
+}
+
+function handleCategorySearch(category) {
+  if (!props.allowCategorySearch) return;
+  emit('category-search', category);
 }
 
 function canReplyEmail(email) {
@@ -1195,6 +1226,40 @@ function loadData() {
         white-space: nowrap;
         text-overflow: ellipsis;
         cursor: pointer;
+      }
+
+      .category-tags {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        flex: 0 0 auto;
+        max-width: 220px;
+        overflow: hidden;
+      }
+
+      .category-tag {
+        border: 1px solid;
+        border-radius: 999px;
+        flex: 0 1 auto;
+        font-size: 12px;
+        font-weight: 500;
+        height: 20px;
+        line-height: 18px;
+        max-width: 90px;
+        overflow: hidden;
+        padding: 0 7px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+
+        &.clickable {
+          cursor: pointer;
+        }
+      }
+
+      .category-more {
+        color: var(--secondary-text-color);
+        flex: 0 0 auto;
+        font-size: 12px;
       }
 
       .subject-text {

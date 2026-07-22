@@ -15,6 +15,8 @@
                  @jump="jumpContent"
                  @refresh-before="refreshBefore"
                  @right-search="rightSearch"
+                 @category-search="handleCategorySearch"
+                 allow-category-search
                  :type="'all-email'"
 
     >
@@ -51,17 +53,34 @@
           <el-option key="4" :label="$t('selectDeleted')" value="delete"/>
           <el-option key="4" :label="$t('noRecipientTitle')" value="noone"/>
         </el-select>
+        <el-select
+            v-if="hasPerm('category:query')"
+            v-model="params.categoryId"
+            :placeholder="$t('category')"
+            class="category-select"
+            clearable
+            @change="categorySelectChange"
+        >
+          <el-option :label="$t('allCategories')" :value="null"/>
+          <el-option :label="$t('uncategorized')" value="uncategorized"/>
+          <el-option
+              v-for="category in categories"
+              :key="category.categoryId"
+              :label="category.name"
+              :value="category.categoryId"
+          />
+        </el-select>
         <Icon class="icon" icon="iconoir:search" @click="search" width="20" height="20"/>
         <Icon class="icon" @click="changeTimeSort" icon="material-symbols-light:timer-arrow-down-outline"
               v-if="params.timeSort === 0" width="28" height="28"/>
         <Icon class="icon" @click="changeTimeSort" icon="material-symbols-light:timer-arrow-up-outline" v-else
               width="28" height="28"/>
-        <Icon class="icon clear" icon="fluent:broom-sparkle-16-regular" width="22" height="22" @click="openBathDelete"/>
+        <Icon v-perm="'all-email:delete'" class="icon clear" icon="fluent:broom-sparkle-16-regular" width="22" height="22" @click="openBathDelete"/>
       </template>
     </emailScroll>
-    <el-dialog v-model="showBathDelete" :title="$t('clearEmail')" width="335"
+    <el-dialog v-model="showBathDelete" :title="$t('clearEmail')" width="min(390px, calc(100vw - 24px))"
                @closed="closedClear">
-      <div class="clear-email">
+      <div class="clear-email" v-loading="autoCleanLoading">
         <el-input v-model="clearParams.sendName" :placeholder="$t('sender')"/>
         <el-input v-model="clearParams.subject" :placeholder="$t('subject')"/>
         <el-input v-model="clearParams.sendEmail" :placeholder="$t('sendEmailAddress')"/>
@@ -82,6 +101,19 @@
           </el-select>
           <el-button :loading="clearLoading" type="primary" @click="batchDelete">{{ t('clear') }}</el-button>
         </div>
+        <el-divider>{{ t('scheduledCleanup') }}</el-divider>
+        <div class="auto-clean-switch">
+          <el-switch v-model="autoCleanEnabled" :active-text="t('enableScheduledCleanup')" />
+        </div>
+        <div class="auto-clean-desc">
+          {{ t('scheduledCleanupDesc') }}
+        </div>
+        <div class="auto-clean-desc" v-if="autoCleanConfig.lastRunTime">
+          {{ t('scheduledCleanupLastRun', { time: autoCleanConfig.lastRunTime, count: autoCleanConfig.lastRunCount }) }}
+        </div>
+        <el-button :loading="autoCleanSaveLoading" type="success" @click="saveAutoClean">
+          {{ t('saveScheduledCleanup') }}
+        </el-button>
       </div>
     </el-dialog>
   </div>
@@ -96,16 +128,20 @@ import {
   allEmailList,
   allEmailDelete,
   allEmailBatchDelete,
+  allEmailAutoClean,
+  allEmailAutoCleanSet,
   allEmailLatest
 } from "@/request/all-email.js";
 import {Icon} from "@iconify/vue";
 import router from "@/router/index.js";
 import {useI18n} from 'vue-i18n';
-import {toUtc} from "@/utils/day.js";
+import {toUtc, tzDayjs} from "@/utils/day.js";
 import {sleep} from "@/utils/time-utils.js";
 import {useSettingStore} from "@/store/setting.js";
 import { useRoute } from 'vue-router'
 import {EmailTypeEnum} from "@/enums/email-enum.js";
+import {categoryList as categoryListReq} from "@/request/category.js";
+import {hasPerm} from "@/perm/perm.js";
 
 defineOptions({
   name: 'all-email'
@@ -115,15 +151,26 @@ const route = useRoute()
 const {t} = useI18n();
 const emailStore = useEmailStore();
 const settingStore = useSettingStore();
-const clearTime = ref('')
+const clearTime = ref(null)
 const sysEmailScroll = ref({})
+const categories = ref([])
 const searchValue = ref('')
 const mySelect = ref()
 const showBathDelete = ref(false)
 const clearLoading = ref(false)
+const autoCleanLoading = ref(false)
+const autoCleanSaveLoading = ref(false)
+const autoCleanEnabled = ref(false)
+const autoCleanConfig = reactive({
+  lastRunTime: '',
+  lastRunCount: 0,
+})
 
 onMounted(() => {
   latest();
+  if (hasPerm('category:query')) {
+    loadCategories()
+  }
 })
 
 const openSelect = () => {
@@ -133,6 +180,7 @@ const openSelect = () => {
 const params = reactive({
   timeSort: 0,
   type: 'receive',
+  categoryId: null,
   userEmail: null,
   accountEmail: null,
   name: null,
@@ -140,29 +188,26 @@ const params = reactive({
   searchType: 'name'
 })
 
-const clearParams = reactive({
-  subject: '',
-  sendEmail: '',
-  sendName: '',
-  startTime: '',
-  toEmail: '',
-  endTime: '',
-  type: 'eq',
-})
+const clearParams = reactive(defaultClearParams())
+
+function defaultClearParams() {
+  return {
+    subject: '',
+    sendEmail: '',
+    sendName: '',
+    startTime: '',
+    toEmail: '',
+    endTime: '',
+    type: 'eq',
+  }
+}
 
 function resetClearParams() {
-  clearParams.subject = ''
-  clearParams.sendEmail = ''
-  clearParams.sendName = ''
-  clearParams.startTime = ''
-  clearParams.toEmail = ''
-  clearParams.endTime = ''
+  Object.assign(clearParams, defaultClearParams())
 }
 
 function closedClear() {
   resetClearParams()
-  clearParams.type = 'eq'
-  clearParams.endTime = ''
   clearTime.value = null
 }
 
@@ -180,6 +225,7 @@ if (paramsStar) {
   params.timeSort = locaParams.timeSort
   params.status = locaParams.status
   params.searchType = locaParams.searchType
+  params.categoryId = locaParams.categoryId || null
 }
 
 watch(() => params, () => {
@@ -190,16 +236,27 @@ watch(() => params, () => {
 
 function openBathDelete() {
   showBathDelete.value = true
+  loadAutoClean()
+}
+
+function buildClearParams() {
+  const params = {...clearParams, startTime: '', endTime: ''}
+  if (clearTime.value) {
+    params.startTime = toUtc(clearTime.value[0]).format("YYYY-MM-DD HH:mm:ss")
+    params.endTime = toUtc(clearTime.value[1]).add(1, 'day').format("YYYY-MM-DD HH:mm:ss")
+  }
+
+  return params;
+}
+
+function hasClearCondition(params) {
+  return Boolean(params.sendEmail || params.sendName || params.subject || params.toEmail || (params.startTime && params.endTime))
 }
 
 function batchDelete() {
 
-  if (clearTime.value) {
-    clearParams.startTime = toUtc(clearTime.value[0]).format("YYYY-MM-DD HH:mm:ss")
-    clearParams.endTime = toUtc(clearTime.value[1]).add(1, 'day').format("YYYY-MM-DD HH:mm:ss")
-  }
-
-  if (!clearParams.sendEmail && !clearParams.sendName && !clearParams.subject && !clearParams.toEmail && !clearTime.value) {
+  const params = buildClearParams();
+  if (!hasClearCondition(params)) {
     showBathDelete.value = false
     return
   }
@@ -214,7 +271,7 @@ function batchDelete() {
   ).then(() => {
     clearLoading.value = true
 
-    allEmailBatchDelete(clearParams).then(() => {
+    allEmailBatchDelete(params).then(() => {
       ElMessage({
         message: t('clearSuccess'),
         type: "success",
@@ -225,6 +282,57 @@ function batchDelete() {
     }).finally(() => {
       clearLoading.value = false
     })
+  })
+}
+
+function applyAutoCleanConfig(config = {}) {
+  autoCleanEnabled.value = Boolean(config.enabled)
+  autoCleanConfig.lastRunTime = config.lastRunTime || ''
+  autoCleanConfig.lastRunCount = config.lastRunCount || 0
+  Object.assign(clearParams, defaultClearParams(), config.params || {})
+
+  if (clearParams.startTime && clearParams.endTime) {
+    clearTime.value = [
+      tzDayjs(clearParams.startTime).toDate(),
+      tzDayjs(clearParams.endTime).subtract(1, 'day').toDate()
+    ]
+  } else {
+    clearTime.value = null
+  }
+}
+
+function loadAutoClean() {
+  autoCleanLoading.value = true
+  allEmailAutoClean().then(applyAutoCleanConfig).finally(() => {
+    autoCleanLoading.value = false
+  })
+}
+
+function saveAutoClean() {
+  const params = buildClearParams();
+
+  if (autoCleanEnabled.value && !hasClearCondition(params)) {
+    ElMessage({
+      message: t('scheduledCleanupConditionRequired'),
+      type: 'warning',
+      plain: true
+    })
+    return
+  }
+
+  autoCleanSaveLoading.value = true
+  allEmailAutoCleanSet({
+    enabled: autoCleanEnabled.value,
+    params
+  }).then((config) => {
+    applyAutoCleanConfig(config)
+    ElMessage({
+      message: t('saveSuccessMsg'),
+      type: 'success',
+      plain: true
+    })
+  }).finally(() => {
+    autoCleanSaveLoading.value = false
   })
 }
 
@@ -242,6 +350,7 @@ function refreshBefore() {
   params.accountEmail = null
   params.name = null
   params.subject = null
+  params.categoryId = null
   params.searchType = 'name'
 }
 
@@ -277,6 +386,26 @@ function changeTimeSort() {
 }
 
 function typeSelectChange() {
+  search()
+}
+
+function categorySelectChange() {
+  search()
+}
+
+function loadCategories() {
+  categoryListReq().then(list => {
+    categories.value = list.filter(item => Number(item.enabled) === 1)
+    if (params.categoryId && params.categoryId !== 'uncategorized' && !categories.value.some(item => item.categoryId === params.categoryId)) {
+      params.categoryId = null
+      sysEmailScroll.value?.refreshList?.()
+    }
+  })
+}
+
+function handleCategorySearch(category) {
+  if (!hasPerm('category:query')) return;
+  params.categoryId = category.categoryId
   search()
 }
 
@@ -324,8 +453,8 @@ async function latest() {
 
     try {
 
-      const curTimeSort = params.timeSort
-      let list = await allEmailLatest(latestId)
+      const curParams = JSON.stringify(params)
+      let list = await allEmailLatest(latestId, {...params})
 
       if (list.length === 0) {
         continue
@@ -336,7 +465,7 @@ async function latest() {
       }
 
       // 确保回来之后条件没变
-      if (params.timeSort !== curTimeSort) {
+      if (JSON.stringify(params) !== curParams) {
         continue
       }
 
@@ -438,6 +567,14 @@ async function latest() {
   display: flex;
   flex-direction: column;
   gap: 15px;
+
+  :deep(.el-date-editor) {
+    width: 100%;
+  }
+
+  :deep(.el-divider) {
+    margin: 2px 0;
+  }
 }
 
 .clear-button {
@@ -450,9 +587,29 @@ async function latest() {
   }
 }
 
+.auto-clean-switch {
+  display: flex;
+  align-items: center;
+}
+
+.auto-clean-desc {
+  color: var(--secondary-text-color);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .status-select {
   margin-bottom: 2px;
   width: 102px;
+
+  :deep(.el-select__wrapper) {
+    min-height: 28px;
+  }
+}
+
+.category-select {
+  margin-bottom: 2px;
+  width: 128px;
 
   :deep(.el-select__wrapper) {
     min-height: 28px;

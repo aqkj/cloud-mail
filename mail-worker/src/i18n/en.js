@@ -27,6 +27,10 @@ const en = {
 	imageAttLimit: 'The maximum number of image attachments is 10',
 	attLimit: 'The maximum number of attachments is 10.',
 	tooManyRecipients: 'Cloudflare Email can send to at most {{count}} recipients per message',
+	autoCleanConditionRequired: 'At least one cleanup condition is required to enable scheduled cleanup',
+	categoryNameRequired: 'Category name is required',
+	categoryRequired: 'Please select an email category',
+	categoryRuleKeywordRequired: 'Category rule keyword is required',
 	pwdLengthLimit: 'Password length exceeds the limit',
 	emailLengthLimit: 'Email length exceeds the limit',
 	minEmailPrefix: 'Email must be at least {{msg}} characters',
@@ -103,7 +107,9 @@ const en = {
 		"系统设置": "System Settings",
 		"设置查看": "View Settings",
 		"设置修改": "Change Settings",
-		"发件重置": "Reset Send Count"
+		"发件重置": "Reset Send Count",
+		"分类查看": "View Categories",
+		"分类管理": "Manage Categories"
 	}
 };
 

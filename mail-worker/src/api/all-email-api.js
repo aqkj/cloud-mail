@@ -13,8 +13,18 @@ app.delete('/allEmail/delete', async (c) => {
 })
 
 app.delete('/allEmail/batchDelete', async (c) => {
-	await emailService.batchDelete(c, c.req.query());
-	return c.json(result.ok());
+	const data = await emailService.batchDelete(c, c.req.query());
+	return c.json(result.ok(data));
+})
+
+app.get('/allEmail/autoClean', async (c) => {
+	const data = await emailService.getAutoClean(c);
+	return c.json(result.ok(data));
+})
+
+app.put('/allEmail/autoClean', async (c) => {
+	const data = await emailService.setAutoClean(c, await c.req.json());
+	return c.json(result.ok(data));
 })
 
 app.get('/allEmail/latest', async (c) => {
