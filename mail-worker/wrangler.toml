@@ -20,7 +20,7 @@ enabled = true
 #bucket_name = ""		#r2对象存储桶的名字
 
 #[[send_email]]
-#name = "email"			#CF发件, 配置后优先使用
+#name = "email"			#Cloudflare Email发件绑定；代码同时兼容官方示例绑定名EMAIL
 
 [ai]
 binding = "ai"

@@ -114,6 +114,7 @@ import dayjs from "dayjs";
 import {useI18n} from "vue-i18n";
 import router from "@/router/index.js";
 import {ElMessageBox} from "element-plus";
+import {EmailTypeEnum} from "@/enums/email-enum.js";
 
 defineExpose({
   open,
@@ -459,13 +460,55 @@ function openForward(email) {
   });
 }
 
+function getNameFromEmail(email) {
+  return String(email || '').split('@')[0] || '';
+}
+
+function applyReplySender(email) {
+  if (Number(email.type) !== EmailTypeEnum.RECEIVE) return;
+  if (!email.accountId || Number(email.userId) !== Number(userStore.user.userId)) return;
+
+  const sendEmail = normalizeEmail(email.toEmail);
+  if (!isEmail(sendEmail)) return;
+
+  form.accountId = Number(email.accountId);
+  form.sendEmail = sendEmail;
+  form.name = Number(email.accountId) === Number(accountStore.currentAccount.accountId)
+      ? accountStore.currentAccount.name
+      : email.toName || getNameFromEmail(sendEmail);
+}
+
+function getReplyRecipients(email) {
+  if (Number(email.type) !== EmailTypeEnum.SEND) {
+    return email.sendEmail ? [email.sendEmail] : [];
+  }
+
+  let recipient = [];
+  try {
+    recipient = JSON.parse(email.recipient || '[]');
+  } catch (e) {
+    recipient = [];
+  }
+
+  if (!Array.isArray(recipient)) {
+    recipient = [];
+  }
+
+  return Array.from(new Set(
+      recipient
+          .filter(Boolean)
+          .map(item => normalizeEmail(item.address || item.email || item))
+          .filter(item => isEmail(item))
+  ));
+}
+
 function openReply(email) {
 
   resetForm();
 
   email.subject = email.subject || ''
 
-  form.receiveEmail.push(email.sendEmail)
+  form.receiveEmail.push(...getReplyRecipients(email))
   form.subject = (
       email.subject.startsWith('Re:') ||
       email.subject.startsWith('Re：') ||
@@ -489,6 +532,7 @@ function openReply(email) {
       </article>
     </blockquote>`
     open()
+    applyReplySender(email)
 
     nextTick(() => {
       backReply.content = editor.value.getContent()

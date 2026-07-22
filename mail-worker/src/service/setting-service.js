@@ -11,6 +11,7 @@ import verifyRecordService from './verify-record-service';
 import userContext from '../security/user-context';
 import verifyUtils from '../utils/verify-utils';
 import domainService from './domain-service';
+import cloudflareEmailService from './cloudflare-email-service';
 
 const settingService = {
 
@@ -92,7 +93,7 @@ const settingService = {
 		settingRow.s3SecretKey = settingRow.s3SecretKey ? `${settingRow.s3SecretKey.slice(0, 12)}******` : null;
 		settingRow.tgBotToken = settingRow.tgBotToken ? `${settingRow.tgBotToken.slice(0, 20)}******` : null;
 		settingRow.hasR2 = !!c.env.r2
-		settingRow.hasCfEmail = !!c.env.email
+		settingRow.hasCfEmail = cloudflareEmailService.hasBinding(c.env)
 
 		let regVerifyOpen = false
 		let addVerifyOpen = false

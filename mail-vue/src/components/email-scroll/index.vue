@@ -171,7 +171,7 @@
               </div>
             </template>
           </el-dropdown-item>
-          <el-dropdown-item v-if="['email','star'].includes(props.type)" @click="openReply(rightClickEmail)">
+          <el-dropdown-item v-if="canReplyEmail(rightClickEmail)" v-perm="'email:send'" @click="openReply(rightClickEmail)">
             <template #default>
               <div class="right-dropdown-item">
                 <Icon icon="la:reply" width="20" height="20"  />
@@ -179,7 +179,7 @@
               </div>
             </template>
           </el-dropdown-item>
-          <el-dropdown-item v-if="['email','send', 'star'].includes(props.type)" @click="openForward(rightClickEmail)">
+          <el-dropdown-item v-if="['email','send', 'star'].includes(props.type)" v-perm="'email:send'" @click="openForward(rightClickEmail)">
             <template #default>
               <div class="right-dropdown-item">
                 <Icon icon="iconoir:arrow-up-right" width="19" height="19"  />
@@ -243,7 +243,7 @@ import {useSettingStore} from "@/store/setting.js";
 import {sleep} from "@/utils/time-utils.js"
 import {fromNow} from "@/utils/day.js";
 import {useI18n} from "vue-i18n";
-import {EmailUnreadEnum} from "@/enums/email-enum.js";
+import {EmailTypeEnum, EmailUnreadEnum} from "@/enums/email-enum.js";
 import { UseVirtualList } from '@vueuse/components'
 import { useScroll } from '@vueuse/core'
 
@@ -492,6 +492,11 @@ function openReply(email) {
 
 function openForward(email) {
   uiStore.writerRef.openForward(email)
+}
+
+function canReplyEmail(email) {
+  if (['email', 'star'].includes(props.type)) return true;
+  return props.type === 'all-email' && Number(email?.type) === EmailTypeEnum.RECEIVE;
 }
 
 function visibleChange(e) {

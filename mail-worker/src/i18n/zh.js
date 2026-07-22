@@ -26,6 +26,7 @@ const zh = {
 	notExistEmailReply: '邮件不存在无法回复',
 	imageAttLimit: '图片不能超过10个',
 	attLimit: '附件不能超过10个',
+	tooManyRecipients: 'Cloudflare Email每次最多发送给{{count}}个收件人',
 	pwdLengthLimit: '密码长度超出限制',
 	emailLengthLimit: '邮箱长度超出限制',
 	minEmailPrefix: '邮箱名至少{{msg}}位',

@@ -69,6 +69,7 @@ function jumpContent(email) {
   emailStore.contentData.showUnread = true
   emailStore.contentData.showStar = true
   emailStore.contentData.showReply = true
+  emailStore.contentData.showForward = true
   router.push('/message')
 }
 

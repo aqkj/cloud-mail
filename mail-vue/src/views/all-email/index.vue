@@ -105,6 +105,7 @@ import {toUtc} from "@/utils/day.js";
 import {sleep} from "@/utils/time-utils.js";
 import {useSettingStore} from "@/store/setting.js";
 import { useRoute } from 'vue-router'
+import {EmailTypeEnum} from "@/enums/email-enum.js";
 
 defineOptions({
   name: 'all-email'
@@ -283,7 +284,9 @@ function jumpContent(email) {
   emailStore.contentData.email = email
   emailStore.contentData.delType = 'physics'
   emailStore.contentData.showStar = false
-  emailStore.contentData.showReply = false
+  emailStore.contentData.showReply = Number(email.type) === EmailTypeEnum.RECEIVE
+  emailStore.contentData.showForward = false
+  emailStore.contentData.showUnread = false
   router.push({name: 'content'})
 }
 

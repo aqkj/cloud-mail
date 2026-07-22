@@ -16,6 +16,7 @@
 | `R2_BUCKET_NAME`        |  ✅  | 您的 R2 存储桶的名称                                    |
 | `DOMAIN`                |  ❌  | 兼容旧配置，邮箱域名 JSON 数组（例如 `["xx.xx"]`），域名较多时不要使用        |
 | `DOMAIN_KV_KEY`         |  ❌  | 自定义 KV 域名列表 key；不配置时默认使用 `cloud-mail:domains`        |
+| `CF_EMAIL`              |  ❌  | 设置为 `true` 时启用 Cloudflare Email Sending Worker 绑定       |
 | `ADMIN`                 |  ✅  | 您的管理员邮箱地址（例如 `admin@example.com`）      |
 | `JWT_SECRET`            |  ✅  | 用于生成和验证 JWT 的随机长字符串                     |
 | `INIT_URL`              |  ❌  | （可选）部署后用于初始化数据库的 Worker URL（格式参考下述手动初始化）           |
@@ -68,3 +69,15 @@ pnpm wrangler kv key put "cloud-mail:domains" --path domains.json --namespace-id
 程序会优先从 KV 读取域名列表；`DOMAIN_KV_KEY` 未配置时使用默认 key `cloud-mail:domains`。如果默认 key 不存在，则兼容读取旧的 `DOMAIN` 环境变量。部署后也可以在后台系统设置页面管理域名，系统会写入 KV。
 
 通配规则只控制系统内注册、添加账号、角色权限和站内发信的域名校验。实际收信仍需要在 Cloudflare Email Routing / Email Service 中接入对应域名或子域名，并把邮件路由到 Worker。
+
+**Cloudflare Email Sending 发信**
+
+如果要使用 Cloudflare Email Service 对外发信，在 GitHub Secrets 或 Variables 中配置：
+
+| 名称 | 示例 |
+| ---- | ---- |
+| `CF_EMAIL` | `true` |
+
+部署时会自动添加 Worker `send_email` 绑定。项目默认绑定名为 `email`，代码同时兼容 Cloudflare 官方文档中的 `EMAIL` 绑定名。
+
+实际发信域名仍需要先在 Cloudflare Email Service 中完成接入和验证；系统内配置 `*.example.com` 只代表允许该邮箱域，不会自动让 Cloudflare 允许这个子域名发信。

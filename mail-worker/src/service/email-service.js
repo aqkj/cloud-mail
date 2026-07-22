@@ -25,6 +25,11 @@ import { att } from '../entity/att';
 import telegramService from './telegram-service';
 import { containsText, equalsText, startsWithText } from '../utils/sql-utils';
 import domainService from './domain-service';
+import cloudflareEmailService from './cloudflare-email-service';
+
+const MAX_CLOUDFLARE_RECIPIENTS = 50;
+const MAX_INLINE_ATTACHMENTS = 10;
+const MAX_FILE_ATTACHMENTS = 10;
 
 const emailService = {
 
@@ -225,9 +230,20 @@ const emailService = {
 			attachments = [] //附件
 		} = params;
 
+		receiveEmail = Array.isArray(receiveEmail) ? receiveEmail : [];
+		attachments = Array.isArray(attachments) ? attachments : [];
+
 		const { resendTokens, r2Domain, send } = await settingService.query(c);
 
 		let { imageDataList, html } = await attService.toImageUrlHtml(c, content);
+
+		if (imageDataList.length > MAX_INLINE_ATTACHMENTS) {
+			throw new BizError(t('imageAttLimit'));
+		}
+
+		if (attachments.length > MAX_FILE_ATTACHMENTS) {
+			throw new BizError(t('attLimit'));
+		}
 
 		//判断是否关闭发件功能
 		if (send === settingConst.send.CLOSE) {
@@ -292,7 +308,11 @@ const emailService = {
 
 		const domain = emailUtils.getDomain(accountRow.email);
 		const resendToken = resendTokens[domain];
-		const useCloudflareEmail = !!c.env.email;
+		const useCloudflareEmail = cloudflareEmailService.hasBinding(c.env);
+
+		if (!allInternal && useCloudflareEmail && receiveEmail.length > MAX_CLOUDFLARE_RECIPIENTS) {
+			throw new BizError(t('tooManyRecipients', { count: MAX_CLOUDFLARE_RECIPIENTS }));
+		}
 
 		//如果接收方存在站外邮箱，又没有发信服务
 		if (!useCloudflareEmail && !resendToken && !allInternal) {
@@ -372,7 +392,7 @@ const emailService = {
 		emailData.content = html;
 		emailData.text = text;
 		emailData.accountId = accountId;
-		emailData.status = useCloudflareEmail ? emailConst.status.DELIVERED : emailConst.status.SENT;
+		emailData.status = emailConst.status.SENT;
 		emailData.type = emailConst.type.SEND;
 		emailData.userId = userId;
 		emailData.resendEmailId = data?.id;
@@ -400,17 +420,11 @@ const emailService = {
 
 		//保存内嵌附件
 		if (imageDataList.length > 0) {
-			if (imageDataList.length > 10) {
-				throw new BizError(t('imageAttLimit'));
-			}
 			await attService.saveArticleAtt(c, imageDataList, userId, accountId, emailResult.emailId);
 		}
 
 		//保存普通附件
 		if (attachments?.length > 0) {
-			if (attachments.length > 10) {
-				throw new BizError(t('attLimit'));
-			}
 			await attService.saveSendAtt(c, attachments, userId, accountId, emailResult.emailId);
 		}
 
@@ -437,10 +451,12 @@ const emailService = {
 	},
 
 	async sendByCloudflareEmail(c, params) {
+		const cfEmail = cloudflareEmailService.binding(c.env);
 		const sendForm = {
 			from: { email: params.accountEmail, name: params.name },
 			to: [...params.receiveEmail],
-			subject: params.subject
+			subject: params.subject,
+			replyTo: { email: params.accountEmail, name: params.name }
 		};
 
 		if (params.text) {
@@ -458,18 +474,26 @@ const emailService = {
 
 		if (params.sendType === 'reply' && params.messageId) {
 			sendForm.headers = {
-				'in-reply-to': params.messageId,
-				'references': params.messageId
+				'In-Reply-To': params.messageId,
+				References: params.messageId
 			};
 		}
 
-		const result = await c.env.email.send(sendForm);
-
-		return {
-			data: {
-				id: result.messageId
-			}
-		};
+		try {
+			const result = await cfEmail.send(sendForm);
+			return {
+				data: {
+					id: result.messageId
+				}
+			};
+		} catch (error) {
+			return {
+				error: {
+					code: error?.code,
+					message: cloudflareEmailService.errorMessage(error)
+				}
+			};
+		}
 	},
 
 	async sendByResend(resendToken, params) {
@@ -494,12 +518,17 @@ const emailService = {
 		return await resend.emails.send(sendForm);
 	},
 
-	async toCloudflareAttachments(attachments) {
-		const arrayBufferAttachments = await this.toArrayBufferAttachments(attachments);
+	async toCloudflareAttachments(attachments = []) {
+		const result = [];
 
-		return arrayBufferAttachments.map(attachment => {
+		for (const attachment of attachments) {
+			const content = await this.toAttachmentBase64(attachment);
+			if (!content) {
+				continue;
+			}
+
 			const item = {
-				content: attachment.content,
+				content,
 				filename: attachment.filename,
 				type: attachment.mimeType || attachment.contentType || attachment.type || 'application/octet-stream',
 				disposition: attachment.contentId ? 'inline' : 'attachment'
@@ -509,8 +538,10 @@ const emailService = {
 				item.contentId = attachment.contentId.replace(/^<|>$/g, '');
 			}
 
-			return item;
-		});
+			result.push(item);
+		}
+
+		return result;
 	},
 
 	async toResendAttachments(attachments = []) {
