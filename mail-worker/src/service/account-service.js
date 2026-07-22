@@ -14,7 +14,21 @@ import { t } from '../i18n/i18n';
 import verifyRecordService from './verify-record-service';
 import domainService from './domain-service';
 
+const SQL_BIND_CHUNK_SIZE = 90;
+
 const accountService = {
+	chunkList(list = [], size = SQL_BIND_CHUNK_SIZE) {
+		const chunks = [];
+		for (let i = 0; i < list.length; i += size) {
+			chunks.push(list.slice(i, i + size));
+		}
+		return chunks;
+	},
+
+	normalizeIdList(ids = []) {
+		ids = Array.isArray(ids) ? ids : String(ids || '').split(',');
+		return ids.map(Number).filter(Boolean);
+	},
 
 	async add(c, params, userId) {
 
@@ -213,8 +227,11 @@ const accountService = {
 	},
 
 	async physicsDeleteByUserIds(c, userIds) {
+		userIds = this.normalizeIdList(userIds);
 		await emailService.physicsDeleteUserIds(c, userIds);
-		await orm(c).delete(account).where(inArray(account.userId,userIds)).run();
+		for (const chunk of this.chunkList(userIds)) {
+			await orm(c).delete(account).where(inArray(account.userId, chunk)).run();
+		}
 	},
 
 	async selectUserAccountCountList(c, userIds, del = isDel.NORMAL) {

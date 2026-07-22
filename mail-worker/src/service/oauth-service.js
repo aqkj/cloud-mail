@@ -6,7 +6,21 @@ import userService from "./user-service";
 import loginService from "./login-service";
 import cryptoUtils from "../utils/crypto-utils";
 
+const SQL_BIND_CHUNK_SIZE = 90;
+
 const oauthService = {
+	chunkList(list = [], size = SQL_BIND_CHUNK_SIZE) {
+		const chunks = [];
+		for (let i = 0; i < list.length; i += size) {
+			chunks.push(list.slice(i, i + size));
+		}
+		return chunks;
+	},
+
+	normalizeIdList(ids = []) {
+		ids = Array.isArray(ids) ? ids : String(ids || '').split(',');
+		return ids.map(Number).filter(Boolean);
+	},
 
 	async bindUser(c, params) {
 
@@ -106,7 +120,10 @@ const oauthService = {
 	},
 
 	async deleteByUserIds(c, userIds) {
-		await orm(c).delete(oauth).where(inArray(oauth.userId, userIds)).run();
+		userIds = this.normalizeIdList(userIds);
+		for (const chunk of this.chunkList(userIds)) {
+			await orm(c).delete(oauth).where(inArray(oauth.userId, chunk)).run();
+		}
 	},
 
 	//定时任务凌晨清除未绑定邮箱的oauth用户

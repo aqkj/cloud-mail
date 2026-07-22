@@ -8,7 +8,21 @@ import userService from './user-service';
 import { t } from '../i18n/i18n.js';
 import { startsWithText } from '../utils/sql-utils';
 
+const SQL_BIND_CHUNK_SIZE = 90;
+
 const regKeyService = {
+	chunkList(list = [], size = SQL_BIND_CHUNK_SIZE) {
+		const chunks = [];
+		for (let i = 0; i < list.length; i += size) {
+			chunks.push(list.slice(i, i + size));
+		}
+		return chunks;
+	},
+
+	normalizeIdList(ids = []) {
+		ids = Array.isArray(ids) ? ids : String(ids || '').split(',');
+		return ids.map(Number).filter(Boolean);
+	},
 
 	async add(c, params, userId) {
 
@@ -44,8 +58,10 @@ const regKeyService = {
 
 	async delete(c, params) {
 		let {regKeyIds} = params;
-		regKeyIds = regKeyIds.split(',').map(id => Number(id));
-		await orm(c).delete(regKey).where(inArray(regKey.regKeyId,regKeyIds)).run();
+		regKeyIds = this.normalizeIdList(regKeyIds);
+		for (const chunk of this.chunkList(regKeyIds)) {
+			await orm(c).delete(regKey).where(inArray(regKey.regKeyId, chunk)).run();
+		}
 	},
 
 	async clearNotUse(c) {

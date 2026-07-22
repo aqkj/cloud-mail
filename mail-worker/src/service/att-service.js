@@ -10,7 +10,16 @@ import { v4 as uuidv4 } from 'uuid';
 import domainUtils from '../utils/domain-uitls';
 import settingService from "./setting-service";
 
+const SQL_BIND_CHUNK_SIZE = 40;
+
 const attService = {
+	chunkList(list = [], size = SQL_BIND_CHUNK_SIZE) {
+		const chunks = [];
+		for (let i = 0; i < list.length; i += size) {
+			chunks.push(list.slice(i, i + size));
+		}
+		return chunks;
+	},
 
 	async addAtt(c, attachments) {
 
@@ -203,42 +212,56 @@ const attService = {
 		await this.removeAttByField(c, 'email_id', emailIds);
 	},
 
-	selectByEmailIds(c, emailIds) {
-		return orm(c).select().from(att).where(
-			and(
-				inArray(att.emailId, emailIds),
-				eq(att.type, attConst.type.ATT)
-			))
-			.all();
+	async selectByEmailIds(c, emailIds) {
+		emailIds = Array.isArray(emailIds) ? emailIds : String(emailIds || '').split(',');
+		emailIds = emailIds.map(Number).filter(Boolean);
+		if (emailIds.length === 0) return [];
+
+		const list = [];
+		for (const chunk of this.chunkList(emailIds, 90)) {
+			const rows = await orm(c).select().from(att).where(
+				and(
+					inArray(att.emailId, chunk),
+					eq(att.type, attConst.type.ATT)
+				))
+				.all();
+			list.push(...rows);
+		}
+		return list;
 	},
 
 	async removeAttByField(c, fieldName, fieldValues) {
 
-		const sqlList = [];
+		if (!fieldValues?.length) return;
+		const delKeyList = [];
 
-		fieldValues.forEach(value => {
+		for (let i = 0; i < fieldValues.length; i += SQL_BIND_CHUNK_SIZE) {
+			const sqlList = [];
+			const chunk = fieldValues.slice(i, i + SQL_BIND_CHUNK_SIZE);
 
-			sqlList.push(
+			chunk.forEach(value => {
 
-				c.env.db.prepare(
-					`SELECT a.key, a.att_id
-						FROM attachments a
-							   JOIN (SELECT key
-									 FROM attachments
-									 GROUP BY key
-									 HAVING COUNT (*) = 1) t
-									ON a.key = t.key
-						WHERE a.${fieldName} = ?;`
-					).bind(value)
-			)
+				sqlList.push(
 
-			sqlList.push(c.env.db.prepare(`DELETE FROM attachments WHERE ${fieldName} = ?`).bind(value))
+					c.env.db.prepare(
+						`SELECT a.key, a.att_id
+							FROM attachments a
+								   JOIN (SELECT key
+										 FROM attachments
+										 GROUP BY key
+										 HAVING COUNT (*) = 1) t
+										ON a.key = t.key
+							WHERE a.${fieldName} = ?;`
+						).bind(value)
+				)
 
-		});
+				sqlList.push(c.env.db.prepare(`DELETE FROM attachments WHERE ${fieldName} = ?`).bind(value))
 
-		const attListResult = await c.env.db.batch(sqlList);
+			});
 
-		const delKeyList = attListResult.flatMap(r => r.results ? r.results.map(row => row.key) : []);
+			const attListResult = await c.env.db.batch(sqlList);
+			delKeyList.push(...attListResult.flatMap(r => r.results ? r.results.map(row => row.key) : []));
+		}
 
 		if (delKeyList.length > 0) {
 			await this.batchDelete(c, delKeyList);
@@ -266,7 +289,9 @@ const attService = {
 		if (!keys || keys.length === 0) {
 			return []
 		}
-		return orm(c).select().from(att).where(inArray(att.key, keys)).orderBy(desc(att.attId)).groupBy(att.key).all();
+		return Promise.all(this.chunkList(keys, 90).map(chunk => {
+			return orm(c).select().from(att).where(inArray(att.key, chunk)).orderBy(desc(att.attId)).groupBy(att.key).all();
+		})).then(list => list.flat());
 	}
 };
 

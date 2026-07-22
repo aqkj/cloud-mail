@@ -7,7 +7,17 @@ import email from '../entity/email';
 import { isDel } from '../const/entity-const';
 import attService from "./att-service";
 import { t } from '../i18n/i18n'
+
+const SQL_BIND_CHUNK_SIZE = 90;
+
 const starService = {
+	chunkList(list = [], size = SQL_BIND_CHUNK_SIZE) {
+		const chunks = [];
+		for (let i = 0; i < list.length; i += size) {
+			chunks.push(list.slice(i, i + size));
+		}
+		return chunks;
+	},
 
 	async add(c, params, userId) {
 		const { emailId } = params;
@@ -76,7 +86,13 @@ const starService = {
 		return { list };
 	},
 	async removeByEmailIds(c, emailIds) {
-		await orm(c).delete(star).where(inArray(star.emailId, emailIds)).run();
+		emailIds = Array.isArray(emailIds) ? emailIds : String(emailIds || '').split(',');
+		emailIds = emailIds.map(Number).filter(Boolean);
+		if (emailIds.length === 0) return;
+
+		for (const chunk of this.chunkList(emailIds)) {
+			await orm(c).delete(star).where(inArray(star.emailId, chunk)).run();
+		}
 	}
 };
 

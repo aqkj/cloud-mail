@@ -22,7 +22,21 @@ import verifyUtils from '../utils/verify-utils';
 import domainService from './domain-service';
 import { containsText } from '../utils/sql-utils';
 
+const SQL_BIND_CHUNK_SIZE = 90;
+
 const userService = {
+	chunkList(list = [], size = SQL_BIND_CHUNK_SIZE) {
+		const chunks = [];
+		for (let i = 0; i < list.length; i += size) {
+			chunks.push(list.slice(i, i + size));
+		}
+		return chunks;
+	},
+
+	normalizeIdList(ids = []) {
+		ids = Array.isArray(ids) ? ids : String(ids || '').split(',');
+		return ids.map(Number).filter(Boolean);
+	},
 
 	async loginUserInfo(c, userId) {
 
@@ -106,10 +120,12 @@ const userService = {
 
 	async physicsDelete(c, params) {
 		let { userIds } = params;
-		userIds = userIds.split(',').map(Number);
+		userIds = this.normalizeIdList(userIds.split(','));
 		await accountService.physicsDeleteByUserIds(c, userIds);
 		await oauthService.deleteByUserIds(c, userIds);
-		await orm(c).delete(user).where(inArray(user.userId, userIds)).run();
+		for (const chunk of this.chunkList(userIds)) {
+			await orm(c).delete(user).where(inArray(user.userId, chunk)).run();
+		}
 	},
 
 	async list(c, params) {

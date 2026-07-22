@@ -29,7 +29,21 @@ function normalizeAvailDomainList(availDomain) {
 	return domains;
 }
 
+const SQL_BIND_CHUNK_SIZE = 90;
+
 const roleService = {
+	chunkList(list = [], size = SQL_BIND_CHUNK_SIZE) {
+		const chunks = [];
+		for (let i = 0; i < list.length; i += size) {
+			chunks.push(list.slice(i, i + size));
+		}
+		return chunks;
+	},
+
+	normalizeIdList(ids = []) {
+		ids = Array.isArray(ids) ? ids : String(ids || '').split(',');
+		return ids.map(Number).filter(Boolean);
+	},
 
 	async add(c, params, userId) {
 
@@ -192,13 +206,15 @@ const roleService = {
 	},
 
 	selectByUserIds(c, userIds) {
+		userIds = this.normalizeIdList(userIds);
 
-		if (!userIds && userIds.length === 0) {
+		if (userIds.length === 0) {
 			return [];
 		}
 
-		return orm(c).select({ ...role, userId: user.userId }).from(user).leftJoin(role, eq(role.roleId, user.type)).where(inArray(user.userId, userIds)).all();
-
+		return Promise.all(this.chunkList(userIds).map(chunk => {
+			return orm(c).select({ ...role, userId: user.userId }).from(user).leftJoin(role, eq(role.roleId, user.type)).where(inArray(user.userId, chunk)).all();
+		})).then(list => list.flat());
 	},
 
 	isBanEmail(banEmail, fromEmail) {

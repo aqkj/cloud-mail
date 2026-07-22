@@ -7,6 +7,7 @@ import { t } from '../i18n/i18n';
 
 const RULE_FIELDS = new Set(['subject', 'sendEmail', 'name', 'toEmail', 'text', 'content', 'all']);
 const MATCH_TYPES = new Set(['eq', 'include', 'left', 'right', 'regex']);
+const SQL_BIND_CHUNK_SIZE = 90;
 
 const emailCategoryService = {
 	defaultCategory() {
@@ -309,6 +310,14 @@ const emailCategoryService = {
 		return source.includes(keyword);
 	},
 
+	chunkList(list = [], size = SQL_BIND_CHUNK_SIZE) {
+		const chunks = [];
+		for (let i = 0; i < list.length; i += size) {
+			chunks.push(list.slice(i, i + size));
+		}
+		return chunks;
+	},
+
 	async classifyEmail(c, emailRow, options = {}) {
 		if (!emailRow?.emailId) return [];
 
@@ -341,14 +350,18 @@ const emailCategoryService = {
 	},
 
 	async removeByEmailIds(c, emailIds = []) {
+		emailIds = Array.isArray(emailIds) ? emailIds : String(emailIds || '').split(',');
 		emailIds = emailIds.map(Number).filter(Boolean);
 		if (emailIds.length === 0) return;
 
-		const placeholders = emailIds.map(() => '?').join(',');
-		await c.env.db.prepare(`DELETE FROM email_category_rel WHERE email_id IN (${placeholders})`).bind(...emailIds).run();
+		for (const chunk of this.chunkList(emailIds)) {
+			const placeholders = chunk.map(() => '?').join(',');
+			await c.env.db.prepare(`DELETE FROM email_category_rel WHERE email_id IN (${placeholders})`).bind(...chunk).run();
+		}
 	},
 
 	async emailAddCategory(c, list = []) {
+		list = Array.isArray(list) ? list : [];
 		const emailIds = list.map(item => Number(item.emailId)).filter(Boolean);
 
 		list.forEach(emailRow => {
@@ -357,23 +370,27 @@ const emailCategoryService = {
 
 		if (emailIds.length === 0) return;
 
-		const placeholders = emailIds.map(() => '?').join(',');
-		const { results } = await c.env.db.prepare(`
-			SELECT
-				rel.email_id AS emailId,
-				c.category_id AS categoryId,
-				c.name,
-				c.color,
-				c.icon,
-				c.sort
-			FROM email_category_rel rel
-			INNER JOIN email_category c ON c.category_id = rel.category_id
-			WHERE rel.email_id IN (${placeholders}) AND c.enabled = 1
-			ORDER BY c.sort ASC, c.category_id ASC
-		`).bind(...emailIds).all();
+		const rows = [];
+		for (const chunk of this.chunkList(emailIds)) {
+			const placeholders = chunk.map(() => '?').join(',');
+			const { results } = await c.env.db.prepare(`
+				SELECT
+					rel.email_id AS emailId,
+					c.category_id AS categoryId,
+					c.name,
+					c.color,
+					c.icon,
+					c.sort
+				FROM email_category_rel rel
+				INNER JOIN email_category c ON c.category_id = rel.category_id
+				WHERE rel.email_id IN (${placeholders}) AND c.enabled = 1
+				ORDER BY c.sort ASC, c.category_id ASC
+			`).bind(...chunk).all();
+			rows.push(...(results || []));
+		}
 
 		const map = {};
-		for (const row of results || []) {
+		for (const row of rows) {
 			if (!map[row.emailId]) {
 				map[row.emailId] = [];
 			}

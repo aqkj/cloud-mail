@@ -32,12 +32,35 @@ const MAX_CLOUDFLARE_RECIPIENTS = 50;
 const MAX_INLINE_ATTACHMENTS = 10;
 const MAX_FILE_ATTACHMENTS = 10;
 const CLEAN_MATCH_TYPES = new Set(['eq', 'left', 'include']);
+const SQL_BIND_CHUNK_SIZE = 90;
 
 const emailService = {
 
 	pushCondition(conditions, condition) {
 		if (condition) {
 			conditions.push(condition);
+		}
+	},
+
+	chunkList(list = [], size = SQL_BIND_CHUNK_SIZE) {
+		const chunks = [];
+		for (let i = 0; i < list.length; i += size) {
+			chunks.push(list.slice(i, i + size));
+		}
+		return chunks;
+	},
+
+	normalizeIdList(ids = []) {
+		ids = Array.isArray(ids) ? ids : String(ids || '').split(',');
+		return ids.map(Number).filter(Boolean);
+	},
+
+	async deleteEmailsByIds(c, emailIds) {
+		emailIds = this.normalizeIdList(emailIds);
+		if (emailIds.length === 0) return;
+
+		for (const chunk of this.chunkList(emailIds)) {
+			await orm(c).delete(email).where(inArray(email.emailId, chunk)).run();
 		}
 	},
 
@@ -288,12 +311,14 @@ const emailService = {
 
 	async delete(c, params, userId) {
 		const { emailIds } = params;
-		const emailIdList = emailIds.split(',').map(Number);
-		await orm(c).update(email).set({ isDel: isDel.DELETE }).where(
-			and(
-				eq(email.userId, userId),
-				inArray(email.emailId, emailIdList)))
-			.run();
+		const emailIdList = this.normalizeIdList(emailIds.split(','));
+		for (const chunk of this.chunkList(emailIdList)) {
+			await orm(c).update(email).set({ isDel: isDel.DELETE }).where(
+				and(
+					eq(email.userId, userId),
+					inArray(email.emailId, chunk)))
+				.run();
+		}
 	},
 
 	async receive(c, params, cidAttList, r2domain) {
@@ -1160,18 +1185,27 @@ const emailService = {
 
 	async physicsDelete(c, params) {
 		let { emailIds } = params;
-		emailIds = emailIds.split(',').map(Number);
+		emailIds = this.normalizeIdList(emailIds.split(','));
 		await attService.removeByEmailIds(c, emailIds);
 		await starService.removeByEmailIds(c, emailIds);
 		await emailCategoryService.removeByEmailIds(c, emailIds);
-		await orm(c).delete(email).where(inArray(email.emailId, emailIds)).run();
+		await this.deleteEmailsByIds(c, emailIds);
 	},
 
 	async physicsDeleteUserIds(c, userIds) {
-		const emailIds = await orm(c).select({ emailId: email.emailId }).from(email).where(inArray(email.userId, userIds)).all();
-		await emailCategoryService.removeByEmailIds(c, emailIds.map(item => item.emailId));
+		userIds = this.normalizeIdList(userIds);
+		const emailIds = [];
+		for (const chunk of this.chunkList(userIds)) {
+			const rows = await orm(c).select({ emailId: email.emailId }).from(email).where(inArray(email.userId, chunk)).all();
+			emailIds.push(...rows);
+		}
+		const emailIdList = emailIds.map(item => item.emailId);
+		await starService.removeByEmailIds(c, emailIdList);
+		await emailCategoryService.removeByEmailIds(c, emailIdList);
 		await attService.removeByUserIds(c, userIds);
-		await orm(c).delete(email).where(inArray(email.userId, userIds)).run();
+		for (const chunk of this.chunkList(userIds)) {
+			await orm(c).delete(email).where(inArray(email.userId, chunk)).run();
+		}
 	},
 
 	updateEmailStatus(c, params) {
@@ -1435,6 +1469,7 @@ const emailService = {
 		}
 
 		await attService.removeByEmailIds(c, emailIds);
+		await starService.removeByEmailIds(c, emailIds);
 		await emailCategoryService.removeByEmailIds(c, emailIds);
 
 		await orm(c).delete(email).where(conditions.length > 1 ? and(...conditions) : conditions[0]).run();
@@ -1443,14 +1478,19 @@ const emailService = {
 
 	async physicsDeleteByAccountId(c, accountId) {
 		const emailIds = await orm(c).select({ emailId: email.emailId }).from(email).where(eq(email.accountId, accountId)).all();
-		await emailCategoryService.removeByEmailIds(c, emailIds.map(item => item.emailId));
+		const emailIdList = emailIds.map(item => item.emailId);
+		await starService.removeByEmailIds(c, emailIdList);
+		await emailCategoryService.removeByEmailIds(c, emailIdList);
 		await attService.removeByAccountId(c, accountId);
 		await orm(c).delete(email).where(eq(email.accountId, accountId)).run();
 	},
 
 	async read(c, params, userId) {
 		const { emailIds } = params;
-		await orm(c).update(email).set({ unread: emailConst.unread.READ }).where(and(eq(email.userId, userId), inArray(email.emailId, emailIds)));
+		const emailIdList = this.normalizeIdList(emailIds);
+		for (const chunk of this.chunkList(emailIdList)) {
+			await orm(c).update(email).set({ unread: emailConst.unread.READ }).where(and(eq(email.userId, userId), inArray(email.emailId, chunk))).run();
+		}
 	}
 };
 
