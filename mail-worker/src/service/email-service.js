@@ -33,6 +33,9 @@ const MAX_INLINE_ATTACHMENTS = 10;
 const MAX_FILE_ATTACHMENTS = 10;
 const CLEAN_MATCH_TYPES = new Set(['eq', 'left', 'include']);
 const SQL_BIND_CHUNK_SIZE = 90;
+const EMAIL_CLEAN_BATCH_SIZE = 500;
+const EMAIL_CLEAN_MAX_BATCH_SIZE = 1000;
+const AUTO_CLEAN_MAX_BATCHES = 20;
 
 const emailService = {
 
@@ -85,6 +88,14 @@ const emailService = {
 		};
 	},
 
+	normalizeCleanBatchSize(size) {
+		size = Number(size || EMAIL_CLEAN_BATCH_SIZE);
+		if (!size || Number.isNaN(size)) {
+			size = EMAIL_CLEAN_BATCH_SIZE;
+		}
+		return Math.min(Math.max(size, 1), EMAIL_CLEAN_MAX_BATCH_SIZE);
+	},
+
 	hasBatchDeleteCondition(params = {}) {
 		return Boolean(
 			params.sendName ||
@@ -130,15 +141,29 @@ const emailService = {
 			return { total: 0 };
 		}
 
-		const result = await this.batchDelete(c, config.params);
+		let total = 0;
+		let finished = false;
+		let batches = 0;
+
+		while (!finished && batches < AUTO_CLEAN_MAX_BATCHES) {
+			const result = await this.batchDelete(c, {
+				...config.params,
+				size: EMAIL_CLEAN_BATCH_SIZE
+			});
+			const processed = Number(result.processed ?? result.total ?? 0);
+			total += processed;
+			finished = result.finished !== false || processed === 0;
+			batches++;
+		}
+
 		const nextConfig = {
 			...config,
 			lastRunTime: dayjs().format('YYYY-MM-DD HH:mm:ss'),
-			lastRunCount: result.total
+			lastRunCount: total
 		};
 
 		await c.env.kv.put(kvConst.EMAIL_AUTO_CLEAN, JSON.stringify(nextConfig));
-		return result;
+		return { total, processed: total, finished, batches };
 	},
 
 	async list(c, params, userId) {
@@ -1428,6 +1453,8 @@ const emailService = {
 	},
 
 	async batchDelete(c, params) {
+		const size = this.normalizeCleanBatchSize(params.size);
+		const withTotal = ['1', 'true'].includes(String(params.withTotal || '').toLowerCase());
 		params = this.normalizeBatchDeleteParams(params);
 		let { sendName, sendEmail, toEmail, subject, startTime, endTime, type  } = params
 
@@ -1457,23 +1484,37 @@ const emailService = {
 		}
 
 		if (!this.hasBatchDeleteCondition(params)) {
-			return { total: 0 };
+			return { total: 0, processed: 0, finished: true, totalMatched: 0 };
 		}
 
-		const emailIdsRow = await orm(c).select({emailId: email.emailId}).from(email).where(conditions.length > 1 ? and(...conditions) : conditions[0]).all();
+		let totalMatched;
+		const condition = conditions.length > 1 ? and(...conditions) : conditions[0];
+
+		if (withTotal) {
+			const totalRow = await orm(c).select({ total: count() }).from(email).where(condition).get();
+			totalMatched = totalRow.total;
+		}
+
+		const emailIdsRow = await orm(c).select({emailId: email.emailId})
+			.from(email)
+			.where(condition)
+			.orderBy(asc(email.emailId))
+			.limit(size)
+			.all();
 
 		const emailIds = emailIdsRow.map(row => row.emailId);
+		const finished = emailIds.length < size;
 
 		if (emailIds.length === 0){
-			return { total: 0 };
+			return { total: 0, processed: 0, finished: true, totalMatched };
 		}
 
 		await attService.removeByEmailIds(c, emailIds);
 		await starService.removeByEmailIds(c, emailIds);
 		await emailCategoryService.removeByEmailIds(c, emailIds);
 
-		await orm(c).delete(email).where(conditions.length > 1 ? and(...conditions) : conditions[0]).run();
-		return { total: emailIds.length };
+		await this.deleteEmailsByIds(c, emailIds);
+		return { total: emailIds.length, processed: emailIds.length, finished, totalMatched };
 	},
 
 	async physicsDeleteByAccountId(c, accountId) {

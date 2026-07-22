@@ -101,6 +101,9 @@
           </el-select>
           <el-button :loading="clearLoading" type="primary" @click="batchDelete">{{ t('clear') }}</el-button>
         </div>
+        <div class="auto-clean-desc" v-if="clearProgress">
+          {{ clearProgress }}
+        </div>
         <el-divider>{{ t('scheduledCleanup') }}</el-divider>
         <div class="auto-clean-switch">
           <el-switch v-model="autoCleanEnabled" :active-text="t('enableScheduledCleanup')" />
@@ -158,6 +161,7 @@ const searchValue = ref('')
 const mySelect = ref()
 const showBathDelete = ref(false)
 const clearLoading = ref(false)
+const clearProgress = ref('')
 const autoCleanLoading = ref(false)
 const autoCleanSaveLoading = ref(false)
 const autoCleanEnabled = ref(false)
@@ -209,6 +213,9 @@ function resetClearParams() {
 function closedClear() {
   resetClearParams()
   clearTime.value = null
+  if (!clearLoading.value) {
+    clearProgress.value = ''
+  }
 }
 
 const selectTitle = computed(() => {
@@ -253,6 +260,41 @@ function hasClearCondition(params) {
   return Boolean(params.sendEmail || params.sendName || params.subject || params.toEmail || (params.startTime && params.endTime))
 }
 
+const CLEAR_BATCH_SIZE = 500
+
+async function runBatchDelete(params) {
+  let total = 0
+  let totalMatched = null
+
+  while (true) {
+    const data = await allEmailBatchDelete({
+      ...params,
+      size: CLEAR_BATCH_SIZE,
+      withTotal: totalMatched == null ? 1 : 0
+    })
+    const processed = Number(data.processed ?? data.total ?? 0)
+    if (totalMatched == null) {
+      totalMatched = Number(data.totalMatched ?? processed)
+    }
+    total += processed
+    if (totalMatched > 0) {
+      clearProgress.value = t('clearProgressWithTotal', {
+        count: total,
+        total: totalMatched,
+        percent: Math.min(100, Math.floor((total / totalMatched) * 100))
+      })
+    } else {
+      clearProgress.value = t('clearProgress', {count: total})
+    }
+
+    if (data.finished !== false || processed === 0) {
+      return total
+    }
+
+    await sleep(80)
+  }
+}
+
 function batchDelete() {
 
   const params = buildClearParams();
@@ -270,10 +312,11 @@ function batchDelete() {
       }
   ).then(() => {
     clearLoading.value = true
+    clearProgress.value = t('clearProgress', {count: 0})
 
-    allEmailBatchDelete(params).then(() => {
+    runBatchDelete(params).then((total) => {
       ElMessage({
-        message: t('clearSuccess'),
+        message: t('clearSuccessWithCount', {count: total}),
         type: "success",
         plain: true
       })
@@ -281,6 +324,7 @@ function batchDelete() {
       sysEmailScroll.value.refreshList();
     }).finally(() => {
       clearLoading.value = false
+      clearProgress.value = ''
     })
   })
 }

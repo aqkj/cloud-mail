@@ -10,7 +10,7 @@ import { v4 as uuidv4 } from 'uuid';
 import domainUtils from '../utils/domain-uitls';
 import settingService from "./setting-service";
 
-const SQL_BIND_CHUNK_SIZE = 40;
+const SQL_BIND_CHUNK_SIZE = 90;
 
 const attService = {
 	chunkList(list = [], size = SQL_BIND_CHUNK_SIZE) {
@@ -19,6 +19,15 @@ const attService = {
 			chunks.push(list.slice(i, i + size));
 		}
 		return chunks;
+	},
+
+	normalizeFieldValues(values = []) {
+		values = Array.isArray(values) ? values : String(values || '').split(',');
+		return values.filter(value => value !== '' && value !== null && value !== undefined);
+	},
+
+	placeholders(list = []) {
+		return list.map(() => '?').join(',');
 	},
 
 	async addAtt(c, attachments) {
@@ -230,38 +239,52 @@ const attService = {
 		return list;
 	},
 
+	async selectExistingKeys(c, keys = []) {
+		const existingKeys = new Set();
+		for (const chunk of this.chunkList(keys, SQL_BIND_CHUNK_SIZE)) {
+			const placeholders = this.placeholders(chunk);
+			const { results } = await c.env.db.prepare(`
+				SELECT DISTINCT key
+				FROM attachments
+				WHERE key IN (${placeholders})
+			`).bind(...chunk).all();
+
+			for (const row of results || []) {
+				existingKeys.add(row.key);
+			}
+		}
+		return existingKeys;
+	},
+
 	async removeAttByField(c, fieldName, fieldValues) {
 
-		if (!fieldValues?.length) return;
-		const delKeyList = [];
+		fieldValues = this.normalizeFieldValues(fieldValues);
+		if (fieldValues.length === 0) return;
+
+		const candidateKeys = new Set();
 
 		for (let i = 0; i < fieldValues.length; i += SQL_BIND_CHUNK_SIZE) {
-			const sqlList = [];
 			const chunk = fieldValues.slice(i, i + SQL_BIND_CHUNK_SIZE);
+			const placeholders = this.placeholders(chunk);
 
-			chunk.forEach(value => {
+			const { results } = await c.env.db.prepare(`
+				SELECT DISTINCT key
+				FROM attachments
+				WHERE ${fieldName} IN (${placeholders})
+			`).bind(...chunk).all();
 
-				sqlList.push(
+			for (const row of results || []) {
+				candidateKeys.add(row.key);
+			}
 
-					c.env.db.prepare(
-						`SELECT a.key, a.att_id
-							FROM attachments a
-								   JOIN (SELECT key
-										 FROM attachments
-										 GROUP BY key
-										 HAVING COUNT (*) = 1) t
-										ON a.key = t.key
-							WHERE a.${fieldName} = ?;`
-						).bind(value)
-				)
-
-				sqlList.push(c.env.db.prepare(`DELETE FROM attachments WHERE ${fieldName} = ?`).bind(value))
-
-			});
-
-			const attListResult = await c.env.db.batch(sqlList);
-			delKeyList.push(...attListResult.flatMap(r => r.results ? r.results.map(row => row.key) : []));
+			await c.env.db.prepare(`DELETE FROM attachments WHERE ${fieldName} IN (${placeholders})`).bind(...chunk).run();
 		}
+
+		const keys = Array.from(candidateKeys);
+		if (keys.length === 0) return;
+
+		const existingKeys = await this.selectExistingKeys(c, keys);
+		const delKeyList = keys.filter(key => !existingKeys.has(key));
 
 		if (delKeyList.length > 0) {
 			await this.batchDelete(c, delKeyList);
