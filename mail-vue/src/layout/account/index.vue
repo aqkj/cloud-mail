@@ -228,6 +228,19 @@ const openSelect = () => {
   mySelect.value.toggleMenu()
 }
 
+function normalizeSuffix(value) {
+  const domain = normalizeEmail(value).replace(/^@+/, '')
+  return domain ? `@${domain}` : ''
+}
+
+function buildEmail(email, suffix) {
+  email = normalizeEmail(email)
+  if (email.includes('@')) {
+    return email
+  }
+  return normalizeEmail(email + normalizeSuffix(suffix))
+}
+
 window.onTurnstileError = (e) => {
   if (verifyErrorCount >= 4) {
     return
@@ -462,7 +475,7 @@ function getAccountList() {
 function submit() {
 
   addForm.email = addForm.email.trim()
-  const email = normalizeEmail(addForm.email + addForm.suffix)
+  const email = buildEmail(addForm.email, addForm.suffix)
   const emailPrefix = email.split('@')[0]
 
   if (!addForm.email) {

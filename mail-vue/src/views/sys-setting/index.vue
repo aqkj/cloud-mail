@@ -79,7 +79,7 @@
                   </el-tooltip>
                 </div>
                 <div class="forward">
-                  <span>{{ $t('domainCount', {count: settingStore.domainList.length}) }}</span>
+                  <span>{{ $t('domainCount', {count: domainRuleCount}) }}</span>
                   <el-button class="opt-button" size="small" type="primary" @click="openDomainManager">
                     <Icon icon="fluent:settings-48-regular" width="18" height="18"/>
                   </el-button>
@@ -462,7 +462,8 @@
       </el-dialog>
       <el-dialog v-model="resendTokenFormShow" :title="$t('resendToken')" width="340" @closed="cleanResendTokenForm">
         <form>
-          <el-select style="margin-bottom: 15px" v-model="resendTokenForm.domain" placeholder="Select">
+          <el-select style="margin-bottom: 15px" v-model="resendTokenForm.domain" placeholder="Select"
+                     filterable allow-create default-first-option :reserve-keyword="false">
             <el-option
                 v-for="item in settingStore.domainList"
                 :key="item"
@@ -654,6 +655,8 @@
             <el-tag>{{ $t('domainKvKey') }}: {{ domainInfo.key }}</el-tag>
             <el-tag type="success">{{ $t('domainCount', {count: domainInfo.count}) }}</el-tag>
           </div>
+          <el-alert class="domain-rule-tip" type="info" :closable="false" show-icon
+                    :title="$t('domainWildcardTip')"/>
           <div class="domain-toolbar">
             <el-input clearable v-model="domainKeyword" :placeholder="$t('searchDomain')"/>
             <el-button @click="loadDomainList">{{ $t('refresh') }}</el-button>
@@ -675,6 +678,13 @@
             {{ $t('batchImport') }}
           </el-button>
           <el-table class="domain-table" :data="filteredDomains" height="340">
+            <el-table-column width="110" :label="$t('domainRuleType')">
+              <template #default="{row}">
+                <el-tag :type="isWildcardDomainRule(row.domain) ? 'warning' : 'success'">
+                  {{ isWildcardDomainRule(row.domain) ? $t('wildcardDomain') : $t('exactDomain') }}
+                </el-tag>
+              </template>
+            </el-table-column>
             <el-table-column property="domain" :label="$t('domain')" :show-overflow-tooltip="true"/>
             <el-table-column :label="$t('action')" fixed="right" width="100">
               <template #default="{row}">
@@ -1000,6 +1010,8 @@ const domainBatchText = ref('')
 const domainInfo = reactive({
   key: 'cloud-mail:domains',
   domains: [],
+  domainRules: [],
+  wildcardDomains: [],
   domainList: [],
   count: 0
 })
@@ -1008,6 +1020,7 @@ const tgMsgFromOption = [{label: t('show'), value: 'show'}, {label: t('hide'), v
 const tgMsgToOption = [{label: t('show'), value: 'show'}, {label: t('hide'), value: 'hide'}]
 const tgMsgTextOption = [{label: t('show'), value: 'show'}, {label: t('hide'), value: 'hide'}]
 const tgMsgLabelWidth = computed(() => locale.value === 'en' ? '120px' : '100px');
+const domainRuleCount = computed(() => settingStore.domainRules?.length || settingStore.domainList.length);
 const filteredDomains = computed(() => {
   const keyword = normalizeDomain(domainKeyword.value);
   return domainInfo.domains
@@ -1023,6 +1036,8 @@ function getSettings() {
   settingQuery().then(settingData => {
     setting.value = settingData
     settingStore.domainList = settingData.domainList;
+    settingStore.domainRules = settingData.domainRules || [];
+    settingStore.wildcardDomains = settingData.wildcardDomains || [];
     resendTokenForm.domain = setting.value.domainList[0]
     loginOpacity.value = setting.value.loginOpacity
     minEmailPrefix.value = setting.value.minEmailPrefix
@@ -1050,6 +1065,16 @@ function normalizeDomain(domain) {
       .toLowerCase();
 }
 
+function isWildcardDomainRule(domain) {
+  domain = normalizeDomain(domain);
+  return domain.startsWith('*.') && isDomain(domain.slice(2));
+}
+
+function isDomainRule(domain) {
+  domain = normalizeDomain(domain);
+  return isDomain(domain) || isWildcardDomainRule(domain);
+}
+
 function parseDomainInput(value) {
   const list = Array.isArray(value) ? value : String(value || '').split(/[\n,，;；\s]+/)
   return Array.from(new Set(
@@ -1069,7 +1094,7 @@ function validateDomainInput(value) {
     return null;
   }
 
-  const invalid = domains.find(domain => !isDomain(domain));
+  const invalid = domains.find(domain => !isDomainRule(domain));
   if (invalid) {
     ElMessage({
       message: t('invalidDomainMsg', {domain: invalid}),
@@ -1084,14 +1109,23 @@ function validateDomainInput(value) {
 
 function setDomainInfo(data) {
   domainInfo.key = data.key
-  domainInfo.domains = data.domains || []
+  domainInfo.domains = data.domains || data.domainRules || []
+  domainInfo.domainRules = data.domainRules || domainInfo.domains
+  domainInfo.wildcardDomains = data.wildcardDomains || domainInfo.domainRules.filter(isWildcardDomainRule)
   domainInfo.domainList = data.domainList || []
   domainInfo.count = data.count || 0
   settingStore.domainList = domainInfo.domainList
+  settingStore.domainRules = domainInfo.domainRules
+  settingStore.wildcardDomains = domainInfo.wildcardDomains
   setting.value.domainList = domainInfo.domainList
+  setting.value.domainRules = domainInfo.domainRules
+  setting.value.wildcardDomains = domainInfo.wildcardDomains
 
-  if (!resendTokenForm.domain || !domainInfo.domainList.includes(resendTokenForm.domain)) {
-    resendTokenForm.domain = domainInfo.domainList[0]
+  const currentResendDomain = normalizeDomain(resendTokenForm.domain)
+  if (!currentResendDomain || !isDomain(currentResendDomain) || currentResendDomain.startsWith('*.')) {
+    resendTokenForm.domain = domainInfo.domainList[0] || ''
+  } else {
+    resendTokenForm.domain = currentResendDomain
   }
 }
 
@@ -1642,7 +1676,17 @@ function saveResendToken() {
   const settingForm = {
     resendTokens: {}
   }
-  const domain = resendTokenForm.domain.slice(1)
+  const domain = normalizeDomain(resendTokenForm.domain)
+
+  if (!isDomain(domain)) {
+    ElMessage({
+      message: t('invalidDomainMsg', {domain}),
+      type: 'error',
+      plain: true,
+    })
+    return
+  }
+
   settingForm.resendTokens[domain] = resendTokenForm.token
   editSetting(settingForm)
 }
@@ -2107,6 +2151,10 @@ function editSetting(settingForm, refreshStatus = true) {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.domain-rule-tip {
+  margin-top: 0;
 }
 
 .domain-toolbar {

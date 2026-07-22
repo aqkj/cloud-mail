@@ -42,11 +42,12 @@
 
 当域名列表超过 Cloudflare Worker 环境变量大小限制时，可以把域名保存到 KV。默认 key 为 `cloud-mail:domains`，也可以在 Action 变量中配置 `DOMAIN_KV_KEY` 自定义 key。
 
-1. 准备 JSON 文件，格式必须是裸域名数组，不要带 `@`：
+1. 准备 JSON 文件，格式必须是域名规则数组，不要带 `@`。`example.com` 只匹配根域名，`*.example.com` 匹配 `a.example.com`、`b.c.example.com` 等子域名：
 
 ```json
 [
   "example.com",
+  "*.example.com",
   "example2.com"
 ]
 ```
@@ -65,3 +66,5 @@ pnpm wrangler kv key put "cloud-mail:domains" --path domains.json --namespace-id
 | `DOMAIN_KV_KEY` | `cloud-mail:domains` |
 
 程序会优先从 KV 读取域名列表；`DOMAIN_KV_KEY` 未配置时使用默认 key `cloud-mail:domains`。如果默认 key 不存在，则兼容读取旧的 `DOMAIN` 环境变量。部署后也可以在后台系统设置页面管理域名，系统会写入 KV。
+
+通配规则只控制系统内注册、添加账号、角色权限和站内发信的域名校验。实际收信仍需要在 Cloudflare Email Routing / Email Service 中接入对应域名或子域名，并把邮件路由到 Worker。

@@ -144,7 +144,7 @@
 </template>
 <script setup>
 import {Icon} from "@iconify/vue";
-import {defineOptions, nextTick, reactive, ref} from "vue";
+import {computed, defineOptions, nextTick, reactive, ref} from "vue";
 import {roleAdd, roleDelete, rolePermTree, roleRoleList, roleSet, roleSetDef} from "@/request/role.js";
 import loading from '@/components/loading/index.vue';
 import {useRoleStore} from "@/store/role.js";
@@ -157,7 +157,7 @@ defineOptions({
   name: 'role'
 })
 
-const {domainList} = useSettingStore();
+const settingStore = useSettingStore();
 const {t, locale} = useI18n();
 const userStore = useUserStore();
 const roleStore = useRoleStore();
@@ -190,8 +190,6 @@ const form = reactive({
   availDomain: []
 })
 
-let domainOptions = []
-
 const expand = ref(false)
 
 let chooseRole = {}
@@ -202,19 +200,21 @@ rolePermTree().then(tree => {
   treeList.push(...tree)
 })
 
-domainOptions = domainList.map(domain => {
-  const cleanDomain = domain.replace(/^@/, '');
-  return {label: cleanDomain, value: cleanDomain};
+const domainOptions = computed(() => {
+  const rules = settingStore.domainRules?.length
+      ? settingStore.domainRules
+      : settingStore.domainList.map(domain => domain.replace(/^@/, ''));
+
+  return rules.map(domain => {
+    const cleanDomain = String(domain).replace(/^@/, '');
+    return {label: cleanDomain, value: cleanDomain};
+  });
 });
 
 
 function availDomainChange() {
-  const index = form.availDomain.findIndex(domain => {
-    return !domainOptions.map(option => option.value).includes(domain)
-  })
-  if (index > -1) {
-    form.availDomain.splice(index, 1)
-  }
+  const optionValues = new Set(domainOptions.value.map(option => option.value))
+  form.availDomain = form.availDomain.filter(domain => optionValues.has(domain))
 }
 
 function banEmailAddTag(val) {

@@ -10,6 +10,24 @@ import user from '../entity/user';
 import verifyUtils from '../utils/verify-utils';
 import { t } from '../i18n/i18n.js';
 import emailUtils from '../utils/email-utils';
+import domainService from './domain-service';
+
+function normalizeAvailDomain(domain) {
+	return verifyUtils.normalizeEmail(domain)
+		.replace(/^@+/, '')
+		.replace(/\.$/, '')
+		.toLowerCase();
+}
+
+function normalizeAvailDomainList(availDomain) {
+	const list = Array.isArray(availDomain) ? availDomain : String(availDomain || '').split(',');
+	const domains = Array.from(new Set(list.map(normalizeAvailDomain).filter(Boolean)));
+	const invalid = domains.find(domain => !domainService.isDomainRule(domain));
+	if (invalid) {
+		throw new BizError(t('invalidDomain', { domain: invalid }));
+	}
+	return domains;
+}
 
 const roleService = {
 
@@ -33,7 +51,7 @@ const roleService = {
 
 		banEmail = banEmail.join(',');
 
-		availDomain = availDomain.join(',');
+		availDomain = normalizeAvailDomainList(availDomain).join(',');
 
 		roleRow = await orm(c).insert(role).values({...params, banEmail, availDomain, userId}).returning().get();
 
@@ -84,7 +102,7 @@ const roleService = {
 
 		banEmail = banEmail.join(',')
 
-		availDomain = availDomain.join(',')
+		availDomain = normalizeAvailDomainList(availDomain).join(',')
 
 		await orm(c).update(role).set({...params, banEmail, availDomain}).where(eq(role.roleId, roleId)).run();
 		await orm(c).delete(rolePerm).where(eq(rolePerm.roleId, roleId)).run();
@@ -166,13 +184,7 @@ const roleService = {
 			return true
 		}
 
-		const availIndex = availDomain.findIndex(item => {
-			const domain = emailUtils.getDomain(email.toLowerCase());
-			const availDomainItem = item.toLowerCase();
-			return domain === availDomainItem
-		})
-
-		return availIndex > -1
+		return domainService.hasDomainInList(availDomain, emailUtils.getDomain(email.toLowerCase()));
 	},
 
 	selectByName(c, roleName) {

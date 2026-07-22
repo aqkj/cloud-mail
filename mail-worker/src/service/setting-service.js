@@ -33,7 +33,10 @@ const settingService = {
 			throw new BizError('数据库未初始化 Database not initialized.');
 		}
 
-		setting.domainList = await domainService.publicList(c);
+		const domainInfo = await domainService.publicInfo(c);
+		setting.domainList = domainInfo.domainList;
+		setting.domainRules = domainInfo.domainRules;
+		setting.wildcardDomains = domainInfo.wildcardDomains;
 
 
 		let linuxdoSwitch = c.env.linuxdo_switch;

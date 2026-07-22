@@ -24,6 +24,7 @@ import account from "../entity/account";
 import { att } from '../entity/att';
 import telegramService from './telegram-service';
 import { containsText, equalsText, startsWithText } from '../utils/sql-utils';
+import domainService from './domain-service';
 
 const emailService = {
 
@@ -224,7 +225,7 @@ const emailService = {
 			attachments = [] //附件
 		} = params;
 
-		const { resendTokens, r2Domain, send, domainList } = await settingService.query(c);
+		const { resendTokens, r2Domain, send } = await settingService.query(c);
 
 		let { imageDataList, html } = await attService.toImageUrlHtml(c, content);
 
@@ -237,10 +238,10 @@ const emailService = {
 		const roleRow = await roleService.selectById(c, userRow.type);
 
 		//判断接收方是不是全部为站内邮箱
-		const allInternal = receiveEmail.every(email => {
-			const domain = '@' + emailUtils.getDomain(email);
-			return domainList.includes(domain);
-		});
+		const internalFlags = await Promise.all(
+			receiveEmail.map(email => domainService.hasDomain(c, emailUtils.getDomain(email)))
+		);
+		const allInternal = internalFlags.every(Boolean);
 
 		if (c.env.admin !== userRow.email) {
 

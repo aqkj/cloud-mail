@@ -253,8 +253,17 @@ const openSelect = () => {
   mySelect.value.toggleMenu()
 }
 
+const normalizeSuffix = (value) => {
+  const domain = normalizeEmail(value).replace(/^@+/, '')
+  return domain ? `@${domain}` : ''
+}
+
 const getFullEmail = (email) => {
-  return normalizeEmail(hideLoginDomain.value ? email : email + suffix.value)
+  email = normalizeEmail(email)
+  if (hideLoginDomain.value || email.includes('@')) {
+    return email
+  }
+  return normalizeEmail(email + normalizeSuffix(suffix.value))
 }
 
 const getEmailName = (email) => {
@@ -421,6 +430,8 @@ function refreshWebsiteConfig() {
   websiteConfig().then(setting => {
     settingStore.settings = setting
     settingStore.domainList = setting.domainList
+    settingStore.domainRules = setting.domainRules || []
+    settingStore.wildcardDomains = setting.wildcardDomains || []
     if (!suffix.value && setting.domainList.length > 0) {
       suffix.value = setting.domainList[0]
     }

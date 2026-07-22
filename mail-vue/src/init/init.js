@@ -35,6 +35,8 @@ export async function init() {
         setting = s;
         settingStore.settings = setting;
         settingStore.domainList = setting.domainList;
+        settingStore.domainRules = setting.domainRules || [];
+        settingStore.wildcardDomains = setting.wildcardDomains || [];
         document.title = setting.title;
 
         if (user) {
@@ -52,6 +54,8 @@ export async function init() {
         setting = await websiteConfig();
         settingStore.settings = setting;
         settingStore.domainList = setting.domainList;
+        settingStore.domainRules = setting.domainRules || [];
+        settingStore.wildcardDomains = setting.wildcardDomains || [];
         document.title = setting.title;
     }
 }

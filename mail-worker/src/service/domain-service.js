@@ -9,7 +9,8 @@ let domainCache = {
 	key: '',
 	expireAt: 0,
 	list: [],
-	set: new Set(),
+	exactSet: new Set(),
+	wildcardBases: [],
 	exists: false
 };
 
@@ -26,6 +27,51 @@ function normalizeDomain(domain) {
 		.replace(/^@+/, '')
 		.replace(/\.$/, '')
 		.toLowerCase();
+}
+
+function isWildcardDomainRule(domain) {
+	return typeof domain === 'string' && domain.startsWith('*.') && verifyUtils.isDomain(domain.slice(2));
+}
+
+function isExactDomainRule(domain) {
+	return verifyUtils.isDomain(domain);
+}
+
+function isDomainRule(domain) {
+	return isExactDomainRule(domain) || isWildcardDomainRule(domain);
+}
+
+function toDomainMeta(list) {
+	const exactSet = new Set();
+	const wildcardBases = [];
+
+	list.forEach(domain => {
+		if (isWildcardDomainRule(domain)) {
+			wildcardBases.push(domain.slice(2));
+		} else {
+			exactSet.add(domain);
+		}
+	});
+
+	wildcardBases.sort((a, b) => b.length - a.length);
+
+	return { exactSet, wildcardBases };
+}
+
+function matchDomainMeta(meta, domain) {
+	if (!domain) {
+		return false;
+	}
+
+	if (meta.exactSet.has(domain)) {
+		return true;
+	}
+
+	return meta.wildcardBases.some(base => domain !== base && domain.endsWith('.' + base));
+}
+
+function exactDomainList(list) {
+	return list.filter(isExactDomainRule);
 }
 
 function parseDomainList(value) {
@@ -52,7 +98,7 @@ function normalizeDomainList(list) {
 }
 
 function validateDomainList(list) {
-	const invalid = list.find(domain => !verifyUtils.isDomain(domain));
+	const invalid = list.find(domain => !isDomainRule(domain));
 	if (invalid) {
 		throw new BizError(t('invalidDomain', { domain: invalid }));
 	}
@@ -84,7 +130,8 @@ const domainService = {
 					key: kvKey,
 					expireAt: now + DOMAIN_CACHE_TTL,
 					list: [],
-					set: new Set(),
+					exactSet: new Set(),
+					wildcardBases: [],
 					exists: false
 				};
 
@@ -127,11 +174,13 @@ const domainService = {
 	},
 
 	setCache(key, list, exists) {
+		const meta = toDomainMeta(list);
 		domainCache = {
 			key,
 			expireAt: Date.now() + DOMAIN_CACHE_TTL,
 			list,
-			set: new Set(list),
+			exactSet: meta.exactSet,
+			wildcardBases: meta.wildcardBases,
 			exists
 		};
 	},
@@ -161,10 +210,13 @@ const domainService = {
 
 	async info(c) {
 		const list = await this.list(c);
+		const publicList = exactDomainList(list).map(domain => '@' + domain);
 		return {
 			key: domainKvKey(c.env),
 			domains: list,
-			domainList: list.map(domain => '@' + domain),
+			domainRules: list,
+			wildcardDomains: list.filter(isWildcardDomainRule),
+			domainList: publicList,
 			count: list.length
 		};
 	},
@@ -193,7 +245,16 @@ const domainService = {
 	},
 
 	async publicList(c) {
-		return (await this.list(c)).map(domain => '@' + domain);
+		return exactDomainList(await this.list(c)).map(domain => '@' + domain);
+	},
+
+	async publicInfo(c) {
+		const list = await this.list(c);
+		return {
+			domainRules: list,
+			wildcardDomains: list.filter(isWildcardDomainRule),
+			domainList: exactDomainList(list).map(domain => '@' + domain)
+		};
 	},
 
 	async hasDomain(c, domain) {
@@ -201,11 +262,25 @@ const domainService = {
 		const kvKey = domainKvKey(c.env);
 
 		if (domainCache.key === kvKey && domainCache.expireAt > Date.now() && domainCache.exists) {
-			return domainCache.set.has(target);
+			return matchDomainMeta(domainCache, target);
 		}
 
 		const list = await this.list(c);
-		return new Set(list).has(target);
+		return this.hasDomainInList(list, target);
+	},
+
+	hasDomainInList(list, domain) {
+		const normalizedList = normalizeDomainList(Array.isArray(list) ? list : this.parseInput(list));
+		const validList = normalizedList.filter(isDomainRule);
+		return matchDomainMeta(toDomainMeta(validList), normalizeDomain(domain));
+	},
+
+	isDomainRule(domain) {
+		return isDomainRule(normalizeDomain(domain));
+	},
+
+	isWildcardDomainRule(domain) {
+		return isWildcardDomainRule(normalizeDomain(domain));
 	}
 };
 
