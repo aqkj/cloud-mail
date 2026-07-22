@@ -348,6 +348,8 @@ const zh = {
     deleteRuleConfirm: '确认删除这条规则吗？',
     reclassifyEmails: '重新分类历史邮件',
     reclassifySuccess: '重新分类完成，共处理 {count} 封邮件',
+    reclassifyProgress: '正在重新分类，已处理 {count} 封...',
+    reclassifyProgressWithTotal: '正在重新分类，已处理 {count}/{total} 封（{percent}%）',
     scheduledCleanup: '定时清理',
     enableScheduledCleanup: '启用定时清理',
     scheduledCleanupDesc: '保存后会在 Cloudflare Cron 每天触发时按以上条件自动物理删除邮件',

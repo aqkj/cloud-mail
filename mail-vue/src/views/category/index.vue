@@ -1,5 +1,5 @@
 <template>
-  <div class="category-page">
+  <div class="category-page" :class="{ 'has-progress': reclassifyProgress }">
     <div class="toolbar">
       <div class="title">{{ t('mailCategory') }}</div>
       <div class="actions">
@@ -11,6 +11,7 @@
         </el-button>
       </div>
     </div>
+    <div class="progress-line" v-if="reclassifyProgress">{{ reclassifyProgress }}</div>
 
     <div class="content-grid">
       <el-card class="category-card" shadow="never">
@@ -156,6 +157,7 @@
 <script setup>
 import {computed, defineOptions, onMounted, reactive, ref} from "vue";
 import {useI18n} from "vue-i18n";
+import {sleep} from "@/utils/time-utils.js";
 import {
   categoryAdd,
   categoryDelete,
@@ -175,6 +177,7 @@ const {t} = useI18n()
 const loading = ref(false)
 const saveLoading = ref(false)
 const reclassifyLoading = ref(false)
+const reclassifyProgress = ref('')
 const categoryFormShow = ref(false)
 const ruleFormShow = ref(false)
 const categories = ref([])
@@ -341,13 +344,32 @@ async function reclassifyAll() {
   reclassifyLoading.value = true
   let lastEmailId = 0
   let total = 0
+  let totalMatched = null
 
   try {
     while (true) {
-      const data = await categoryReclassify({lastEmailId, size: 200, clearOld: true})
+      const data = await categoryReclassify({
+        lastEmailId,
+        size: 500,
+        clearOld: true,
+        withTotal: totalMatched == null ? 1 : 0
+      })
       total += data.processed
       lastEmailId = data.lastEmailId
+      if (totalMatched == null) {
+        totalMatched = Number(data.totalMatched ?? total)
+      }
+      if (totalMatched > 0) {
+        reclassifyProgress.value = t('reclassifyProgressWithTotal', {
+          count: total,
+          total: totalMatched,
+          percent: Math.min(100, Math.floor((total / totalMatched) * 100))
+        })
+      } else {
+        reclassifyProgress.value = t('reclassifyProgress', {count: total})
+      }
       if (data.finished) break;
+      await sleep(80)
     }
 
     ElMessage({
@@ -357,6 +379,7 @@ async function reclassifyAll() {
     })
   } finally {
     reclassifyLoading.value = false
+    reclassifyProgress.value = ''
   }
 }
 
@@ -374,6 +397,12 @@ function matchTypeLabel(value) {
   height: 100%;
   overflow: hidden;
   padding: 18px;
+
+  &.has-progress {
+    .content-grid {
+      height: calc(100% - 78px);
+    }
+  }
 }
 
 .toolbar {
@@ -391,6 +420,12 @@ function matchTypeLabel(value) {
     display: flex;
     gap: 10px;
   }
+}
+
+.progress-line {
+  color: var(--secondary-text-color);
+  font-size: 13px;
+  margin: -6px 0 12px;
 }
 
 .content-grid {

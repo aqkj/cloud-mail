@@ -1,4 +1,4 @@
-import { asc, gt, sql } from 'drizzle-orm';
+import { asc, count, gt, sql } from 'drizzle-orm';
 import orm from '../entity/orm';
 import email from '../entity/email';
 import kvConst from '../const/kv-const';
@@ -8,6 +8,7 @@ import { t } from '../i18n/i18n';
 const RULE_FIELDS = new Set(['subject', 'sendEmail', 'name', 'toEmail', 'text', 'content', 'all']);
 const MATCH_TYPES = new Set(['eq', 'include', 'left', 'right', 'regex']);
 const SQL_BIND_CHUNK_SIZE = 90;
+const RELATION_INSERT_CHUNK_SIZE = Math.floor(SQL_BIND_CHUNK_SIZE / 3);
 
 const emailCategoryService = {
 	defaultCategory() {
@@ -325,7 +326,19 @@ const emailCategoryService = {
 			await this.removeByEmailIds(c, [emailRow.emailId]);
 		}
 
-		const rules = await this.enabledRules(c);
+		const rules = options.rules || await this.enabledRules(c);
+		const matched = this.matchedRules(emailRow, rules);
+
+		await this.insertRelations(c, matched.map(rule => ({
+			categoryId: rule.categoryId,
+			emailId: emailRow.emailId,
+			ruleId: rule.ruleId
+		})));
+
+		return matched;
+	},
+
+	matchedRules(emailRow, rules = []) {
 		const matched = [];
 		const matchedCategoryIds = new Set();
 
@@ -338,15 +351,24 @@ const emailCategoryService = {
 				continue;
 			}
 
-			await c.env.db.prepare(`
-				INSERT OR IGNORE INTO email_category_rel (category_id, email_id, rule_id)
-				VALUES (?, ?, ?)
-			`).bind(rule.categoryId, emailRow.emailId, rule.ruleId).run();
 			matchedCategoryIds.add(rule.categoryId);
 			matched.push(rule);
 		}
 
 		return matched;
+	},
+
+	async insertRelations(c, relations = []) {
+		if (relations.length === 0) return;
+
+		for (const chunk of this.chunkList(relations, RELATION_INSERT_CHUNK_SIZE)) {
+			const placeholders = chunk.map(() => '(?, ?, ?)').join(',');
+			const values = chunk.flatMap(row => [row.categoryId, row.emailId, row.ruleId]);
+			await c.env.db.prepare(`
+				INSERT OR IGNORE INTO email_category_rel (category_id, email_id, rule_id)
+				VALUES ${placeholders}
+			`).bind(...values).run();
+		}
 	},
 
 	async removeByEmailIds(c, emailIds = []) {
@@ -424,9 +446,18 @@ const emailCategoryService = {
 	},
 
 	async reclassify(c, params = {}) {
-		const size = Math.min(Math.max(Number(params.size || 200), 1), 500);
+		const size = Math.min(Math.max(Number(params.size || 500), 1), 500);
 		const lastEmailId = Number(params.lastEmailId || 0);
 		const clearOld = params.clearOld !== false;
+		const withTotal = ['1', 'true'].includes(String(params.withTotal || '').toLowerCase());
+		let totalMatched;
+
+		if (withTotal) {
+			const totalRow = await orm(c).select({ total: count() }).from(email)
+				.where(gt(email.emailId, lastEmailId))
+				.get();
+			totalMatched = totalRow.total;
+		}
 
 		const list = await orm(c).select().from(email)
 			.where(gt(email.emailId, lastEmailId))
@@ -438,14 +469,25 @@ const emailCategoryService = {
 			await this.removeByEmailIds(c, list.map(item => item.emailId));
 		}
 
+		const rules = await this.enabledRules(c);
+		const relations = [];
+
 		for (const emailRow of list) {
-			await this.classifyEmail(c, emailRow);
+			const matched = this.matchedRules(emailRow, rules);
+			relations.push(...matched.map(rule => ({
+				categoryId: rule.categoryId,
+				emailId: emailRow.emailId,
+				ruleId: rule.ruleId
+			})));
 		}
+
+		await this.insertRelations(c, relations);
 
 		return {
 			lastEmailId: list.length > 0 ? list.at(-1).emailId : lastEmailId,
 			processed: list.length,
-			finished: list.length < size
+			finished: list.length < size,
+			totalMatched
 		};
 	}
 };

@@ -348,6 +348,8 @@ const en = {
     deleteRuleConfirm: 'Delete this rule?',
     reclassifyEmails: 'Reclassify Emails',
     reclassifySuccess: 'Reclassification complete. Processed {count} emails',
+    reclassifyProgress: 'Reclassifying, processed {count} emails...',
+    reclassifyProgressWithTotal: 'Reclassifying, processed {count}/{total} emails ({percent}%)',
     scheduledCleanup: 'Scheduled Cleanup',
     enableScheduledCleanup: 'Enable scheduled cleanup',
     scheduledCleanupDesc: 'After saving, Cloudflare Cron will physically delete emails matching the conditions above on each daily run',
